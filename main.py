@@ -131,7 +131,7 @@ class FlickeringLight(PointLight):
                 self.color = color.black
             else:
                 # Random intensity variation
-                intensity = random.uniform(0.5, 1.0)
+                intensity = random.uniform(0.1, 1.0) # More drastic range
                 self.color = color.rgba(
                     self.base_color.r * intensity,
                     self.base_color.g * intensity,
@@ -145,10 +145,8 @@ def create_wall(position, scale, color=color.white):
         position=position, 
         scale=scale, 
         color=color, 
-        texture='white_cube', 
         collider='box'
     )
-    e.texture_scale = (scale[0], scale[1])
     return e
 
 def create_floor(position, scale):
@@ -157,10 +155,8 @@ def create_floor(position, scale):
         position=position, 
         scale=scale, 
         color=color.gray, 
-        texture='white_cube', 
         collider='box'
     )
-    e.texture_scale = (scale[0], scale[2])
     return e
 
 # -------------------------------
@@ -227,7 +223,7 @@ def start_game():
     FlickeringLight(parent=scene, position=(0, 3.5, 10), color=color.rgba(200, 200, 150, 255))
 
     # Living Room (Left)
-    lr_color = color.rgb(200, 150, 150)
+    lr_color = color.red
     # Floor
     create_floor(position=(-7, 0, 0), scale=(10, 1, 10))
     # Ceiling
@@ -245,7 +241,7 @@ def start_game():
     LightSwitch(position=(-2.2, 1.5, 1), rotation=(0, 90, 0), light_source=lr_light)
 
     # Kitchen (Right)
-    k_color = color.rgb(150, 200, 200)
+    k_color = color.cyan
     # Floor
     create_floor(position=(7, 0, 0), scale=(10, 1, 10))
     # Ceiling
@@ -289,7 +285,7 @@ def start_game():
     create_wall(position=(0, 6, -15), scale=(4, 4, 0.2), color=uc_color) # End
     
     # Master Bedroom (at z=-20, connected to corridor end)
-    br_color = color.rgb(150, 150, 200)
+    br_color = color.blue
     create_floor(position=(0, 4, -20), scale=(10, 1, 10))
     create_wall(position=(0, 8, -20), scale=(10, 0.2, 10), color=br_color) # Ceiling
     create_wall(position=(-5, 6, -20), scale=(0.2, 4, 10), color=br_color)

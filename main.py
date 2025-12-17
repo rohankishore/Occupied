@@ -76,7 +76,7 @@ class LightSwitch(Entity):
             color=color.green,
             unlit=True
         )
-        self.is_on = True
+        self.is_on = False
 
     def toggle(self):
         self.is_on = not self.is_on
@@ -109,6 +109,35 @@ class Door(Entity):
             self.animate_rotation_y(self.rotation_y + 90, duration=0.5)
         else:
             self.animate_rotation_y(self.rotation_y - 90, duration=0.5)
+
+class FlickeringLight(PointLight):
+    def __init__(self, position, color=color.white, **kwargs):
+        super().__init__(position=position, color=color, **kwargs)
+        self.base_color = color
+        self.flicker_timer = 0
+        self.is_flickering = True
+
+    def update(self):
+        if not self.is_flickering:
+            return
+            
+        self.flicker_timer -= time.dt
+        if self.flicker_timer <= 0:
+            # Randomize next flicker time
+            self.flicker_timer = random.uniform(0.05, 0.2)
+            
+            # Randomly turn off or dim
+            if random.random() < 0.3:
+                self.color = color.black
+            else:
+                # Random intensity variation
+                intensity = random.uniform(0.5, 1.0)
+                self.color = color.rgba(
+                    self.base_color.r * intensity,
+                    self.base_color.g * intensity,
+                    self.base_color.b * intensity,
+                    255
+                )
 
 def create_wall(position, scale, color=color.white):
     e = Entity(
@@ -191,6 +220,11 @@ def start_game():
     # End walls
     create_wall(position=(0, 2, -15), scale=(4, 4, 0.2), color=corridor_color) # Entrance
     # (Other end is stairs)
+
+    # Corridor Lights (Flickering)
+    FlickeringLight(parent=scene, position=(0, 3.5, -10), color=color.rgba(200, 200, 150, 255))
+    FlickeringLight(parent=scene, position=(0, 3.5, 0), color=color.rgba(200, 200, 150, 255))
+    FlickeringLight(parent=scene, position=(0, 3.5, 10), color=color.rgba(200, 200, 150, 255))
 
     # Living Room (Left)
     lr_color = color.rgb(200, 150, 150)

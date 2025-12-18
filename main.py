@@ -1,5 +1,6 @@
 from ursina import *
 from ursina.prefabs.first_person_controller import FirstPersonController
+from random import uniform
 
 app = Ursina(borderless=False)
 window.title = 'HOME'
@@ -10,17 +11,11 @@ mouse.visible = True
 # GLOBAL STATE
 # -------------------------------
 game_state = 'splash'  # 'splash' -> 'game'
-
-# Paint System
-paint_colors = [
-    color.white, color.light_gray, color.gray, color.dark_gray, color.black,
-    color.red, color.orange, color.yellow, color.lime, color.green,
-    color.turquoise, color.cyan, color.azure, color.blue,
-    color.violet, color.magenta, color.pink, color.brown,
-    color.rgb(139, 69, 19) # SaddleBrown
-]
-current_paint_index = 6 # Default to a nice color
-paint_indicator = None
+flickering_lights = []
+current_focus = None
+interaction_prompt = None
+default_cursor_color = color.white
+highlight_cursor_color = color.yellow
 
 # -------------------------------
 # SPLASH / CONTENT WARNING
@@ -57,7 +52,17 @@ continue_text = Text(
 # CLASSES & HELPERS
 # -------------------------------
 class LightSwitch(Entity):
-    def __init__(self, position, rotation=(0,0,0), light_source=None, **kwargs):
+    def __init__(
+        self,
+        position,
+        rotation=(0,0,0),
+        light_source=None,
+        start_on=True,
+        prompt_on=None,
+        prompt_off=None,
+        on_first_activate=None,
+        **kwargs
+    ):
         super().__init__(
             model='cube',
             color=color.dark_gray,
@@ -68,6 +73,10 @@ class LightSwitch(Entity):
             **kwargs
         )
         self.light_source = light_source
+        self.prompt_on = prompt_on
+        self.prompt_off = prompt_off
+        self.on_first_activate = on_first_activate
+        self.has_triggered = False
         self.indicator = Entity(
             parent=self,
             model='quad',
@@ -76,7 +85,14 @@ class LightSwitch(Entity):
             color=color.green,
             unlit=True
         )
-        self.is_on = False
+        self.is_on = start_on
+        if not self.is_on:
+            self.indicator.color = color.red
+            if self.light_source:
+                self.light_source.disable()
+        else:
+            if self.light_source:
+                self.light_source.enable()
 
     def toggle(self):
         self.is_on = not self.is_on
@@ -84,17 +100,79 @@ class LightSwitch(Entity):
             self.indicator.color = color.green
             if self.light_source: 
                 self.light_source.enable()
+            if not self.has_triggered and self.on_first_activate:
+                self.on_first_activate()
+                self.has_triggered = True
         else:
             self.indicator.color = color.red
             if self.light_source: 
                 self.light_source.disable()
 
+    def get_interaction_text(self):
+        if self.is_on:
+            return self.prompt_on or 'Press E to toggle light'
+        return self.prompt_off or 'Press E to toggle light'
+
+
+class FlickeringLight:
+    def __init__(self, light, interval_range=(0.08, 0.25), intensity_range=(0.35, 1.0)):
+        self.light = light
+        self.interval_range = interval_range
+        self.intensity_range = intensity_range
+        self.base_color = (
+            light.color.r,
+            light.color.g,
+            light.color.b,
+            light.color.a
+        )
+        self.current_intensity = intensity_range[1]
+        self.target_intensity = intensity_range[1]
+        self.timer = uniform(*self.interval_range)
+
+    def update(self):
+        self.timer -= time.dt
+        if self.timer <= 0:
+            self.timer = uniform(*self.interval_range)
+            self.target_intensity = uniform(*self.intensity_range)
+        self.current_intensity = lerp(
+            self.current_intensity,
+            self.target_intensity,
+            min(1, time.dt * 8)
+        )
+        self._apply_intensity(self.current_intensity)
+
+    def _apply_intensity(self, intensity):
+        clamped = max(0.0, min(1.0, intensity))
+        r, g, b, a = self.base_color
+        self.light.color = Color(
+            max(0.0, min(1.0, r * clamped)),
+            max(0.0, min(1.0, g * clamped)),
+            max(0.0, min(1.0, b * clamped)),
+            a
+        )
+
+
+def resolve_interactable(entity):
+    while entity and not isinstance(entity, (LightSwitch, Door)):
+        entity = entity.parent
+    return entity
+
+
+def interaction_text_for(entity):
+    if hasattr(entity, 'get_interaction_text'):
+        return entity.get_interaction_text()
+    if isinstance(entity, LightSwitch):
+        return 'Press E to toggle light'
+    if isinstance(entity, Door):
+        return 'Press E to close door' if entity.is_open else 'Press E to open door'
+    return ''
+
 class Door(Entity):
-    def __init__(self, position, rotation=(0,0,0), **kwargs):
+    def __init__(self, position, rotation=(0,0,0), width=3.2, height=3.5, thickness=0.12, door_color=color.rgb(120, 94, 76), **kwargs):
         super().__init__(
             model='cube',
-            color=color.rgb(139, 69, 19), # SaddleBrown
-            scale=(2, 3.5, 0.2),
+            color=door_color,
+            scale=(width, height, thickness),
             position=position,
             rotation=rotation,
             collider='box',
@@ -110,54 +188,43 @@ class Door(Entity):
         else:
             self.animate_rotation_y(self.rotation_y - 90, duration=0.5)
 
-class FlickeringLight(PointLight):
-    def __init__(self, position, color=color.white, **kwargs):
-        super().__init__(position=position, color=color, **kwargs)
-        self.base_color = color
-        self.flicker_timer = 0
-        self.is_flickering = True
-
-    def update(self):
-        if not self.is_flickering:
-            return
-            
-        self.flicker_timer -= time.dt
-        if self.flicker_timer <= 0:
-            # Randomize next flicker time
-            self.flicker_timer = random.uniform(0.05, 0.2)
-            
-            # Randomly turn off or dim
-            if random.random() < 0.3:
-                self.color = color.black
-            else:
-                # Random intensity variation
-                intensity = random.uniform(0.1, 1.0) # More drastic range
-                self.color = color.rgba(
-                    self.base_color.r * intensity,
-                    self.base_color.g * intensity,
-                    self.base_color.b * intensity,
-                    255
-                )
-
-def create_wall(position, scale, color=color.white):
+def create_wall(position, scale, color=color.white, texture='white_cube'):
     e = Entity(
         model='cube', 
         position=position, 
         scale=scale, 
         color=color, 
+        texture=texture, 
         collider='box'
     )
+    if texture:
+        e.texture_scale = (scale[0], scale[1])
     return e
 
-def create_floor(position, scale):
+def create_floor(position, scale, color_value=color.gray, texture='white_cube'):
     e = Entity(
         model='plane', 
         position=position, 
         scale=scale, 
-        color=color.gray, 
+        color=color_value, 
+        texture=texture, 
         collider='box'
     )
+    if texture:
+        e.texture_scale = (scale[0], scale[2])
     return e
+
+
+def add_door_label(door, label_text):
+    return Text(
+        text=label_text,
+        parent=door,
+        position=(0, door.scale_y / 2 + 0.3, -door.scale_z / 2 - 0.02),
+        origin=(0, 0),
+        scale=0.6,
+        color=color.black,
+        billboard=True
+    )
 
 # -------------------------------
 # GAME WORLD
@@ -165,9 +232,13 @@ def create_floor(position, scale):
 player = None
 
 def start_game():
-    global game_state, player
+    global game_state, player, flickering_lights, current_focus
+    global interaction_prompt, default_cursor_color
 
     game_state = 'game'
+
+    flickering_lights.clear()
+    current_focus = None
 
     # Hide splash UI
     splash_bg.disable()
@@ -182,17 +253,30 @@ def start_game():
         mouse_sensitivity=Vec2(40, 40),
         position=(0, 1, -5)
     )
+    default_cursor_color = player.cursor.color
+    player.cursor.color = default_cursor_color
+
+    interaction_prompt = Text(
+        text='',
+        parent=camera.ui,
+        y=-0.4,
+        origin=(0, 0),
+        scale=0.8,
+        color=color.white,
+        enabled=False
+    )
 
     # -------------------
     # GROUND FLOOR
     # -------------------
     
     # Main Corridor (Ground)
-    corridor_color = color.light_gray
+    corridor_color = color.rgb(212, 195, 178)
+    corridor_ceiling_color = color.rgb(245, 237, 224)
     # Floor
     create_floor(position=(0, 0, 0), scale=(4, 1, 30))
     # Ceiling
-    create_wall(position=(0, 4, 0), scale=(4, 0.2, 30), color=corridor_color)
+    create_wall(position=(0, 4, 0), scale=(4, 0.2, 30), color=corridor_ceiling_color)
     
     # Corridor Walls
     # Left wall segments (leaving gaps for doors)
@@ -203,7 +287,13 @@ def start_game():
     create_wall(position=(-2, 3.75, 0), scale=(0.2, 0.5, 3), color=corridor_color) # Above door
     
     # Door to Living Room
-    Door(position=(-2, 1.75, -1.5), rotation=(0, 0, 0))
+    living_room_door = Door(
+        position=(-2, 1.85, -1.5),
+        rotation=(0, 0, 0),
+        height=3.8,
+        door_color=color.rgb(155, 115, 95)
+    )
+    add_door_label(living_room_door, '101')
 
     # Right wall segments
     create_wall(position=(2, 2, -8.25), scale=(0.2, 4, 13.5), color=corridor_color)
@@ -211,23 +301,31 @@ def start_game():
     create_wall(position=(2, 3.75, 0), scale=(0.2, 0.5, 3), color=corridor_color)
     
     # Door to Kitchen
-    Door(position=(2, 1.75, 1.5), rotation=(0, 180, 0))
+    kitchen_door = Door(
+        position=(2, 1.85, 1.5),
+        rotation=(0, 180, 0),
+        height=3.8,
+        door_color=color.rgb(120, 150, 170)
+    )
+    add_door_label(kitchen_door, '102')
+
+    # Corridor lighting
+    corridor_light_color = color.rgb(255, 236, 200)
+    for z in (-12, -4, 4, 12):
+        light = PointLight(parent=scene, position=(0, 2.8, z), color=corridor_light_color)
+        flickering_lights.append(FlickeringLight(light))
 
     # End walls
     create_wall(position=(0, 2, -15), scale=(4, 4, 0.2), color=corridor_color) # Entrance
     # (Other end is stairs)
 
-    # Corridor Lights (Flickering)
-    FlickeringLight(parent=scene, position=(0, 3.5, -10), color=color.rgba(200, 200, 150, 255))
-    FlickeringLight(parent=scene, position=(0, 3.5, 0), color=color.rgba(200, 200, 150, 255))
-    FlickeringLight(parent=scene, position=(0, 3.5, 10), color=color.rgba(200, 200, 150, 255))
-
     # Living Room (Left)
-    lr_color = color.red
+    lr_color = color.rgb(214, 168, 146)
+    lr_ceiling_color = color.rgb(238, 210, 188)
     # Floor
     create_floor(position=(-7, 0, 0), scale=(10, 1, 10))
     # Ceiling
-    create_wall(position=(-7, 4, 0), scale=(10, 0.2, 10), color=lr_color)
+    create_wall(position=(-7, 4, 0), scale=(10, 0.2, 10), color=lr_ceiling_color)
     # Walls
     create_wall(position=(-12, 2, 0), scale=(0.2, 4, 10), color=lr_color) # Far left
     create_wall(position=(-7, 2, 5), scale=(10, 4, 0.2), color=lr_color)  # Front
@@ -241,11 +339,12 @@ def start_game():
     LightSwitch(position=(-2.2, 1.5, 1), rotation=(0, 90, 0), light_source=lr_light)
 
     # Kitchen (Right)
-    k_color = color.cyan
+    k_color = color.rgb(167, 206, 188)
+    k_ceiling_color = color.rgb(230, 242, 236)
     # Floor
     create_floor(position=(7, 0, 0), scale=(10, 1, 10))
     # Ceiling
-    create_wall(position=(7, 4, 0), scale=(10, 0.2, 10), color=k_color)
+    create_wall(position=(7, 4, 0), scale=(10, 0.2, 10), color=k_ceiling_color)
     # Walls
     create_wall(position=(12, 2, 0), scale=(0.2, 4, 10), color=k_color) # Far right
     create_wall(position=(7, 2, 5), scale=(10, 4, 0.2), color=k_color)  # Front
@@ -276,18 +375,118 @@ def start_game():
     # -------------------
     
     # Upper Corridor
-    uc_color = color.light_gray
+    uc_color = color.rgb(205, 200, 190)
+    uc_ceiling_color = color.rgb(236, 230, 220)
     create_floor(position=(0, 4, 0), scale=(4, 1, 30)) 
     
-    # Upper Corridor Walls
-    create_wall(position=(-2, 6, 0), scale=(0.2, 4, 30), color=uc_color)
-    create_wall(position=(2, 6, 0), scale=(0.2, 4, 30), color=uc_color)
+    # Upper Corridor Walls (segmented for additional rooms)
+    create_wall(position=(-2, 6, -5.25), scale=(0.2, 4, 19.5), color=uc_color)
+    create_wall(position=(-2, 6, 11.25), scale=(0.2, 4, 7.5), color=uc_color)
+    create_wall(position=(2, 6, 5.25), scale=(0.2, 4, 19.5), color=uc_color)
+    create_wall(position=(2, 6, -11.25), scale=(0.2, 4, 7.5), color=uc_color)
+    create_wall(position=(0, 8, 0), scale=(4, 0.2, 30), color=uc_ceiling_color)
     create_wall(position=(0, 6, -15), scale=(4, 4, 0.2), color=uc_color) # End
+
+    # Upper Floor Dark Rooms
+    dark_wall_color = color.rgb(70, 70, 90)
+    dark_floor_color = color.rgb(30, 30, 35)
+    dark_ceiling_color = color.rgb(55, 55, 65)
+
+    # Room 203 - Storage (left side)
+    room203_center = Vec3(-8, 4, 6)
+    room203_size = Vec3(6, 4, 6)
+    create_floor(position=room203_center, scale=(room203_size.x, 1, room203_size.z), color_value=dark_floor_color, texture=None)
+    create_wall(position=(room203_center.x - room203_size.x / 2, room203_center.y + 2, room203_center.z), scale=(0.2, room203_size.y, room203_size.z), color=dark_wall_color, texture=None)
+    create_wall(position=(room203_center.x + room203_size.x / 2, room203_center.y + 2, room203_center.z), scale=(0.2, room203_size.y, room203_size.z), color=dark_wall_color, texture=None)
+    create_wall(position=(room203_center.x, room203_center.y + 2, room203_center.z + room203_size.z / 2), scale=(room203_size.x, room203_size.y, 0.2), color=dark_wall_color, texture=None)
+    create_wall(position=(room203_center.x, room203_center.y + 2, room203_center.z - room203_size.z / 2), scale=(room203_size.x, room203_size.y, 0.2), color=dark_wall_color, texture=None)
+    create_wall(position=(room203_center.x, room203_center.y + room203_size.y, room203_center.z), scale=(room203_size.x, 0.2, room203_size.z), color=dark_ceiling_color, texture=None)
+
+    room203_light = PointLight(parent=scene, position=(room203_center.x, room203_center.y + 2, room203_center.z), color=color.rgb(255, 220, 200))
+    room203_light.disable()
+
+    room203_scare = Entity(
+        model='quad',
+        color=color.rgb(200, 20, 20),
+        scale=(2.5, 2.5),
+        position=(room203_center.x, room203_center.y + 1.5, room203_center.z - room203_size.z / 2 + 0.3),
+        rotation_y=0,
+        enabled=False,
+        billboard=True
+    )
+
+    def reveal_room203():
+        room203_scare.enabled = True
+
+    storage_door = Door(
+        position=(-2, 5.85, 6),
+        rotation=(0, 0, 0),
+        width=3.2,
+        height=3.8,
+        door_color=color.rgb(110, 110, 140)
+    )
+    add_door_label(storage_door, '203')
+
+    LightSwitch(
+        position=(-3.4, 5.5, 7.2),
+        rotation=(0, 90, 0),
+        light_source=room203_light,
+        start_on=False,
+        prompt_off='Press E to switch on lights (warning: jumpscare)',
+        prompt_on='Press E to switch off lights',
+        on_first_activate=reveal_room203
+    )
+
+    # Room 204 - Closet (right side)
+    room204_center = Vec3(8, 4, -6)
+    room204_size = Vec3(6, 4, 6)
+    create_floor(position=room204_center, scale=(room204_size.x, 1, room204_size.z), color_value=dark_floor_color, texture=None)
+    create_wall(position=(room204_center.x - room204_size.x / 2, room204_center.y + 2, room204_center.z), scale=(0.2, room204_size.y, room204_size.z), color=dark_wall_color, texture=None)
+    create_wall(position=(room204_center.x + room204_size.x / 2, room204_center.y + 2, room204_center.z), scale=(0.2, room204_size.y, room204_size.z), color=dark_wall_color, texture=None)
+    create_wall(position=(room204_center.x, room204_center.y + 2, room204_center.z + room204_size.z / 2), scale=(room204_size.x, room204_size.y, 0.2), color=dark_wall_color, texture=None)
+    create_wall(position=(room204_center.x, room204_center.y + 2, room204_center.z - room204_size.z / 2), scale=(room204_size.x, room204_size.y, 0.2), color=dark_wall_color, texture=None)
+    create_wall(position=(room204_center.x, room204_center.y + room204_size.y, room204_center.z), scale=(room204_size.x, 0.2, room204_size.z), color=dark_ceiling_color, texture=None)
+
+    room204_light = PointLight(parent=scene, position=(room204_center.x, room204_center.y + 2, room204_center.z), color=color.rgb(220, 220, 255))
+    room204_light.disable()
+
+    room204_scare = Entity(
+        model='quad',
+        color=color.rgb(240, 0, 120),
+        scale=(2.0, 2.0),
+        position=(room204_center.x, room204_center.y + 1.5, room204_center.z + room204_size.z / 2 - 0.3),
+        rotation_y=180,
+        enabled=False,
+        billboard=True
+    )
+
+    def reveal_room204():
+        room204_scare.enabled = True
+
+    closet_door = Door(
+        position=(2, 5.85, -6),
+        rotation=(0, 180, 0),
+        width=3.2,
+        height=3.8,
+        door_color=color.rgb(100, 120, 150)
+    )
+    add_door_label(closet_door, '204')
+
+    LightSwitch(
+        position=(3.4, 5.5, -7.2),
+        rotation=(0, -90, 0),
+        light_source=room204_light,
+        start_on=False,
+        prompt_off='Press E to switch on lights (brace yourself)',
+        prompt_on='Press E to switch off lights',
+        on_first_activate=reveal_room204
+    )
     
     # Master Bedroom (at z=-20, connected to corridor end)
-    br_color = color.blue
+    br_color = color.rgb(182, 180, 220)
+    br_ceiling_color = color.rgb(218, 216, 240)
     create_floor(position=(0, 4, -20), scale=(10, 1, 10))
-    create_wall(position=(0, 8, -20), scale=(10, 0.2, 10), color=br_color) # Ceiling
+    create_wall(position=(0, 8, -20), scale=(10, 0.2, 10), color=br_ceiling_color) # Ceiling
     create_wall(position=(-5, 6, -20), scale=(0.2, 4, 10), color=br_color)
     create_wall(position=(5, 6, -20), scale=(0.2, 4, 10), color=br_color)
     create_wall(position=(0, 6, -25), scale=(10, 4, 0.2), color=br_color)
@@ -306,7 +505,14 @@ def start_game():
     create_wall(position=(0, 7.75, -15), scale=(3, 0.5, 0.2), color=br_color)
     
     # Door to Bedroom
-    Door(position=(-1.5, 5.75, -15), rotation=(0, 0, 0))
+    bedroom_door = Door(
+        position=(-1.5, 5.85, -15),
+        rotation=(0, 0, 0),
+        width=3.4,
+        height=3.8,
+        door_color=color.rgb(150, 145, 200)
+    )
+    add_door_label(bedroom_door, '201')
     
     # Light for Bedroom
     br_light = PointLight(parent=scene, position=(0, 7, -20), color=color.cyan)
@@ -315,28 +521,10 @@ def start_game():
     # Ambient light for base visibility
     AmbientLight(color=color.rgba(30, 30, 30, 255))
 
-    # Paint UI
-    global paint_indicator
-    paint_indicator = Entity(
-        parent=camera.ui,
-        model='circle',
-        scale=0.05,
-        position=(0.8, -0.45),
-        color=paint_colors[current_paint_index]
-    )
-    Text(
-        parent=camera.ui,
-        text='[Scroll] Select Paint\n[LMB] Apply Paint',
-        position=(0.65, -0.38),
-        scale=0.8,
-        color=color.white
-    )
-
 # -------------------------------
 # INPUT HANDLING
 # -------------------------------
 def input(key):
-    global current_paint_index
     if game_state == 'splash':
         if key == 'enter':
             start_game()
@@ -350,30 +538,40 @@ def input(key):
         if key == 'e':
             hit_info = raycast(camera.world_position, camera.forward, distance=5)
             if hit_info.hit:
-                if isinstance(hit_info.entity, LightSwitch):
-                    hit_info.entity.toggle()
-                elif isinstance(hit_info.entity, Door):
-                    hit_info.entity.toggle()
-
-        # Painting
-        if key == 'left mouse down':
-            hit_info = raycast(camera.world_position, camera.forward, distance=10)
-            if hit_info.hit:
-                hit_info.entity.color = paint_colors[current_paint_index]
-                
-        if key == 'scroll up':
-            current_paint_index = (current_paint_index + 1) % len(paint_colors)
-            if paint_indicator:
-                paint_indicator.color = paint_colors[current_paint_index]
-        if key == 'scroll down':
-            current_paint_index = (current_paint_index - 1) % len(paint_colors)
-            if paint_indicator:
-                paint_indicator.color = paint_colors[current_paint_index]
+                target = resolve_interactable(hit_info.entity)
+                if isinstance(target, LightSwitch):
+                    target.toggle()
+                elif isinstance(target, Door):
+                    target.toggle()
 
 # -------------------------------
 # UPDATE LOOP
 # -------------------------------
 def update():
-    pass
+    for controller in flickering_lights:
+        controller.update()
+
+    if game_state != 'game':
+        return
+
+    global current_focus
+
+    hit_info = raycast(camera.world_position, camera.forward, distance=5)
+    target = resolve_interactable(hit_info.entity) if hit_info.hit else None
+
+    target_text = interaction_text_for(target) if target else ''
+
+    if target != current_focus or (interaction_prompt and interaction_prompt.enabled and interaction_prompt.text != target_text):
+        current_focus = target
+        if target and interaction_prompt:
+            interaction_prompt.text = target_text
+            interaction_prompt.enabled = True
+            if player and player.cursor:
+                player.cursor.color = highlight_cursor_color
+        else:
+            if interaction_prompt:
+                interaction_prompt.enabled = False
+            if player and player.cursor:
+                player.cursor.color = default_cursor_color
 
 app.run()

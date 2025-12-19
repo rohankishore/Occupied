@@ -3,16 +3,18 @@ from ursina.prefabs.first_person_controller import FirstPersonController
 from random import uniform
 
 app = Ursina(borderless=False)
-window.title = 'HOME'
-window.color = color.black
+window.title = 'THE OCCUPIED'
+window.color = color.rgb(5, 0, 0)
 window.multisamples = 4  # Enable 4x MSAA (Anti-Aliasing)
 mouse.visible = True
 
 # -------------------------------
 # GLOBAL STATE
 # -------------------------------
-game_state = 'splash'  # 'splash' -> 'game'
+SHOW_SPLASH = False
+game_state = 'splash' if SHOW_SPLASH else 'game'
 flickering_lights = []
+ambient_audio = None
 
 # -------------------------------
 # SPLASH / CONTENT WARNING
@@ -21,7 +23,8 @@ splash_bg = Entity(
     model='quad',
     scale=(2, 1),
     color=color.black,
-    z=1
+    z=1,
+    enabled=SHOW_SPLASH
 )
 
 warning_text = Text(
@@ -35,15 +38,80 @@ warning_text = Text(
     ),
     origin=(0, 0),
     scale=1.1,
-    color=color.white
+    color=color.white,
+    enabled=SHOW_SPLASH
 )
 
 continue_text = Text(
     text="\n\nPress ENTER to continue\nPress ESC to quit",
     y=-0.35,
     scale=0.8,
-    color=color.gray
+    color=color.gray,
+    enabled=SHOW_SPLASH
 )
+
+# -------------------------------
+# PHOTO VIEW UI
+# -------------------------------
+viewing_photo = False
+photo_overlay = Entity(
+    parent=camera.ui,
+    model='quad',
+    color=color.rgba(0, 0, 0, 220),
+    scale=(1.8, 1.0),
+    enabled=False,
+    z=-0.01
+)
+photo_frame = Entity(
+    parent=photo_overlay,
+    model='quad',
+    color=color.rgb(24, 24, 24),
+    scale=(1.3, 0.85),
+    z=-0.01
+)
+photo_image = Entity(
+    parent=photo_frame,
+    model='quad',
+    color=color.white,
+    texture='white_cube',
+    scale=(0.95, 0.9),
+    z=-0.02,
+    unlit=True
+)
+photo_caption = Text(
+    parent=photo_overlay,
+    text='Press E or ESC to close',
+    y=-0.42,
+    origin=(0, 0),
+    scale=0.8,
+    color=color.light_gray
+)
+
+def show_photo(texture_path):
+    global viewing_photo
+    viewing_photo = True
+    photo_image.texture = texture_path
+    photo_overlay.enabled = True
+    mouse.visible = True
+    if hasattr(mouse, 'locked'):
+        mouse.locked = False
+    if player:
+        player.enabled = False
+
+def hide_photo():
+    global viewing_photo
+    if not viewing_photo:
+        return
+    viewing_photo = False
+    photo_overlay.enabled = False
+    mouse.visible = False
+    scene.fog_color = color.rgb(10, 0, 0)
+    scene.fog_density = 0.03
+    camera.overlay.color = color.rgba(0, 0, 0, 90)
+    if hasattr(mouse, 'locked'):
+        mouse.locked = True
+    if player:
+        player.enabled = True
 
 # -------------------------------
 # CLASSES & HELPERS
@@ -120,7 +188,7 @@ class FlickeringLight:
         )
 
 class WallLight(Entity):
-    def __init__(self, position, rotation=(0,0,0), light_color=color.rgb(255, 220, 150), flicker=False, interval_range=(0.08, 0.25), intensity_range=(0.35, 1.0), **kwargs):
+    def __init__(self, position, rotation=(0,0,0), light_color=None, flicker=False, interval_range=(0.08, 0.25), intensity_range=(0.35, 1.0), **kwargs):
         super().__init__(
             model='cube',
             scale=(0.5, 0.8, 0.1), # Tall rectangular light like in image
@@ -129,6 +197,7 @@ class WallLight(Entity):
             color=color.dark_gray,
             **kwargs
         )
+        light_color = light_color or haunted_light_color()
         self.emissive = Entity(
             parent=self,
             model='quad',
@@ -174,6 +243,84 @@ class Door(Entity):
         else:
             self.animate_rotation_y(self.rotation_y - 90, duration=0.5)
 
+
+class PhotoTable(Entity):
+    def __init__(self, position, rotation=(0, 0, 0), photo_texture='assets/photo_placeholder1.png', table_scale=(2.2, 1.0, 1.2), **kwargs):
+        super().__init__(position=position, rotation=rotation, **kwargs)
+        self.photo_texture = photo_texture
+        half_height = table_scale[1] * 0.5
+        self.collider = BoxCollider(self, center=Vec3(0, half_height, 0), size=Vec3(*table_scale))
+
+        top_color = color.rgb(70, 45, 28)
+        leg_color = color.rgb(210, 210, 210)
+
+        self.table_top = Entity(
+            parent=self,
+            model='cube',
+            texture='assets/wood1.jpg',
+            color=top_color,
+            scale=(table_scale[0], 0.12, table_scale[2]),
+            position=(0, half_height, 0)
+        )
+
+        leg_offsets = (
+            (table_scale[0] * 0.45, table_scale[2] * 0.4),
+            (-table_scale[0] * 0.45, table_scale[2] * 0.4),
+            (table_scale[0] * 0.45, -table_scale[2] * 0.4),
+            (-table_scale[0] * 0.45, -table_scale[2] * 0.4)
+        )
+        leg_height = max(0.6, table_scale[1] - 0.1)
+        for lx, lz in leg_offsets:
+            Entity(
+                parent=self,
+                model='cube',
+                color=leg_color,
+                scale=(0.12, leg_height, 0.12),
+                position=(lx, leg_height * 0.5, lz)
+            )
+
+        Entity(
+            parent=self.table_top,
+            model='quad',
+            color=color.rgba(140, 0, 0, 120),
+            rotation_x=90,
+            position=(0.35, 0.07, -0.18),
+            scale=(0.75, 0.3),
+            unlit=True
+        )
+
+        frame = Entity(
+            parent=self.table_top,
+            model='quad',
+            color=color.rgb(15, 15, 15),
+            rotation=(65, 180, 0),
+            position=(-0.05, 0.22, 0.1),
+            scale=(0.72, 0.52),
+            unlit=True,
+            double_sided=True
+        )
+        Entity(
+            parent=frame,
+            model='quad',
+            texture=photo_texture,
+            rotation=(0, 0, 0),
+            position=(0, 0, -0.02),
+            scale=(0.9, 0.9),
+            unlit=True
+        )
+
+        Entity(
+            parent=self.table_top,
+            model='cube',
+            color=color.rgb(25, 20, 20),
+            position=(-0.05, 0.09, -0.02),
+            rotation=(0, 20, 0),
+            scale=(0.1, 0.22, 0.4)
+        )
+
+    def interact(self):
+        show_photo(self.photo_texture)
+
 def create_wall(position, scale, color=color.white, texture='assets/wall.jpg', texture_scale=None):
     e = Entity(
         model='cube', 
@@ -203,13 +350,20 @@ def create_floor(position, scale):
     e.texture_scale = (scale[0] * 0.25, scale[2] * 0.25)
     return e
 
+
+def haunted_light_color():
+    r = max(30, min(140, 90 + uniform(-20, 25)))
+    g = max(0, min(40, 5 + uniform(-5, 10)))
+    b = max(0, min(70, 20 + uniform(-10, 15)))
+    return color.rgb(r, g, b)
+
 # -------------------------------
 # GAME WORLD
 # -------------------------------
 player = None
 
 def start_game():
-    global game_state, player, flickering_lights
+    global game_state, player, flickering_lights, ambient_audio
 
     game_state = 'game'
     flickering_lights.clear()
@@ -220,6 +374,13 @@ def start_game():
     continue_text.disable()
 
     mouse.visible = False
+
+    if ambient_audio is None:
+        ambient_audio = Audio('assets/audio/bg.mp3', loop=True, autoplay=False)
+        ambient_audio.volume = 0.04
+    if not ambient_audio.playing:
+        ambient_audio.volume = 0.04
+        ambient_audio.play()
 
     # Player
     player = FirstPersonController(
@@ -244,12 +405,15 @@ def start_game():
     # -------------------
     # HELPERS
     # -------------------
-    def make_room(pos, size, door_dir, light_color=color.rgb(80, 70, 10), flicker=False, decorator=None):
+    def make_room(pos, size, door_dir, light_color=None, flicker=False, decorator=None):
         # pos: (x, z) center of room
         # size: (width, depth)
         # door_dir: 'north', 'south', 'east', 'west' (direction pointing INTO the room from corridor)
         w, d = size
         x, z = pos
+
+        if light_color is None:
+            light_color = haunted_light_color()
 
         # Floor and ceiling
         create_floor(position=(x, 0, z), scale=(w, 1, d))
@@ -425,7 +589,16 @@ def start_game():
             decorator(center=(x, z), size=(w, d))
 
     painting_textures = [
-        'assets/wood.jpg',
+        'assets/photo_placeholder1.png',
+        'assets/photo_placeholder2.png',
+        'assets/photo_placeholder3.png',
+        'assets/photo_placeholder1.png',
+        'assets/photo_placeholder2.png',
+        'assets/photo_placeholder3.png',
+        'assets/photo_placeholder1.png',
+        'assets/photo_placeholder2.png',
+        'assets/photo_placeholder3.png',
+        'assets/photo_placeholder1.png',
     ]
     painting_index = 0
 
@@ -446,6 +619,50 @@ def start_game():
         )
         # Pull the painting slightly off the wall so the texture is visible head-on.
         painting.position += painting.forward * 0.03
+
+    photo_textures = [
+        'assets/photo_placeholder1.png',
+        'assets/photo_placeholder2.png',
+        'assets/photo_placeholder3.png'
+    ]
+    photo_index = 0
+
+    def add_photo_table_factory(door_direction):
+        def decorator(center, size):
+            nonlocal photo_index
+            if not photo_textures:
+                return
+
+            cx, cz = center
+            w, d = size
+            wall_offset = 1.4
+            y = 0
+
+            if door_direction == 'west':
+                position = (cx - w / 2 + wall_offset, y, cz)
+                rotation = (0, 90, 0)
+            elif door_direction == 'east':
+                position = (cx + w / 2 - wall_offset, y, cz)
+                rotation = (0, -90, 0)
+            elif door_direction == 'north':
+                position = (cx, y, cz + d / 2 - wall_offset)
+                rotation = (0, 180, 0)
+            else:  # 'south'
+                position = (cx, y, cz - d / 2 + wall_offset)
+                rotation = (0, 0, 0)
+
+            texture_path = photo_textures[photo_index % len(photo_textures)]
+            photo_index += 1
+            PhotoTable(position=position, rotation=rotation, photo_texture=texture_path)
+
+        return decorator
+
+    def combine_decorators(*decorators):
+        def wrapper(center, size):
+            for deco in decorators:
+                if deco:
+                    deco(center=center, size=size)
+        return wrapper
 
     def add_occult_circle(center, size):
         cx, cz = center
@@ -537,7 +754,7 @@ def start_game():
     Door(position=(-5, DOOR_HEIGHT/2, -40 + DOOR_WIDTH/2), rotation=(0, -90, 0), width=DOOR_WIDTH, height=DOOR_HEIGHT, door_color=theme_door)
     create_wall(position=(-5, CORRIDOR_HEIGHT/2, -17), scale=(0.2, CORRIDOR_HEIGHT, 44), color=theme_wall)
     
-    make_room((-9, -40), (8, 8), 'west')
+    make_room((-9, -40), (8, 8), 'west', decorator=add_photo_table_factory('west'))
 
     # Right Wall (X=5)
     # Room 2 (Big) at Z=-15
@@ -546,7 +763,7 @@ def start_game():
     Door(position=(5, DOOR_HEIGHT/2, -15 - DOOR_WIDTH/2), rotation=(0, 90, 0), width=DOOR_WIDTH, height=DOOR_HEIGHT, door_color=theme_door)
     create_wall(position=(5, CORRIDOR_HEIGHT/2, -9.5), scale=(0.2, CORRIDOR_HEIGHT, 9), color=theme_wall)
     
-    make_room((12, -15), (14, 14), 'east')
+    make_room((12, -15), (14, 14), 'east', decorator=add_photo_table_factory('east'))
 
     # Lights Segment A
     for z in range(-40, -5, 15):
@@ -609,7 +826,7 @@ def start_game():
     Door(position=(35, DOOR_HEIGHT/2, 25 - DOOR_WIDTH/2), rotation=(0, 90, 0), width=DOOR_WIDTH, height=DOOR_HEIGHT, door_color=theme_door)
     create_wall(position=(35, CORRIDOR_HEIGHT/2, 33), scale=(0.2, CORRIDOR_HEIGHT, 14), color=theme_wall)
     
-    make_room((42, 25), (12, 12), 'east')
+    make_room((42, 25), (12, 12), 'east', decorator=add_photo_table_factory('east'))
 
     # Lights Segment C
     for z in range(10, 35, 15):
@@ -712,7 +929,14 @@ def start_game():
     # Upper rooms
     left_room_center = (stair_x - CORRIDOR_WIDTH / 2 - 6, left_door_flush + DOOR_WIDTH)
     right_room_center = (stair_x + CORRIDOR_WIDTH / 2 + 6, right_door_flush + DOOR_WIDTH)
-    make_room(left_room_center, (12, 14), 'west', light_color=color.rgb(140, 50, 20), flicker=True, decorator=add_occult_circle)
+    make_room(
+        left_room_center,
+        (12, 14),
+        'west',
+        light_color=color.rgb(140, 50, 20),
+        flicker=True,
+        decorator=combine_decorators(add_occult_circle, add_photo_table_factory('west'))
+    )
     make_room(right_room_center, (10, 12), 'east', light_color=color.rgb(90, 20, 20), flicker=True, decorator=add_storage_abattoir)
 
     # Upper hallway lighting and props
@@ -746,9 +970,33 @@ def start_game():
     # Ambient light
     AmbientLight(color=color.rgba(6, 6, 6, 255))
 
+
+if not SHOW_SPLASH:
+    start_game()
+
 # -------------------------------
 # INPUT HANDLING
 # -------------------------------
+def attempt_interaction():
+    hit_info = raycast(camera.world_position, camera.forward, distance=5)
+    if not hit_info.hit:
+        return
+
+    entity = hit_info.entity
+    if isinstance(entity, LightSwitch):
+        entity.toggle()
+        return
+    if isinstance(entity, Door):
+        entity.toggle()
+        return
+
+    target = entity
+    while target and not isinstance(target, PhotoTable):
+        target = target.parent
+    if isinstance(target, PhotoTable):
+        target.interact()
+
+
 def input(key):
     if game_state == 'splash':
         if key == 'enter':
@@ -757,16 +1005,16 @@ def input(key):
             application.quit()
 
     elif game_state == 'game':
+        if viewing_photo:
+            if key in ('e', 'escape', 'left mouse down', 'right mouse down'):
+                hide_photo()
+            return
+
         if key == 'escape':
             application.quit()
         
-        if key == 'e':
-            hit_info = raycast(camera.world_position, camera.forward, distance=5)
-            if hit_info.hit:
-                if isinstance(hit_info.entity, LightSwitch):
-                    hit_info.entity.toggle()
-                elif isinstance(hit_info.entity, Door):
-                    hit_info.entity.toggle()
+        if key in ('e', 'left mouse down'):
+            attempt_interaction()
 
 # -------------------------------
 # UPDATE LOOP

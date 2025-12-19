@@ -8,17 +8,14 @@ window.color = color.rgb(5, 0, 0)
 window.multisamples = 4  # Enable 4x MSAA (Anti-Aliasing)
 mouse.visible = True
 
-# -------------------------------
-# GLOBAL STATE
-# -------------------------------
 SHOW_SPLASH = False
 game_state = 'splash' if SHOW_SPLASH else 'game'
 flickering_lights = []
 ambient_audio = None
+player_control_backup = {'speed': None, 'sensitivity': None}
+TOILET_MODEL = 'assets/3d/10778_Toilet_V2.obj'
 
-# -------------------------------
-# SPLASH / CONTENT WARNING
-# -------------------------------
+
 splash_bg = Entity(
     model='quad',
     scale=(2, 1),
@@ -50,9 +47,6 @@ continue_text = Text(
     enabled=SHOW_SPLASH
 )
 
-# -------------------------------
-# PHOTO VIEW UI
-# -------------------------------
 viewing_photo = False
 photo_overlay = Entity(
     parent=camera.ui,
@@ -96,7 +90,14 @@ def show_photo(texture_path):
     if hasattr(mouse, 'locked'):
         mouse.locked = False
     if player:
-        player.enabled = False
+        if player_control_backup['speed'] is None:
+            player_control_backup['speed'] = player.speed
+        if player_control_backup['sensitivity'] is None:
+            player_control_backup['sensitivity'] = player.mouse_sensitivity
+        player.speed = 0
+        player.mouse_sensitivity = Vec2(0, 0)
+        if hasattr(player, 'cursor'):
+            player.cursor.enabled = False
 
 def hide_photo():
     global viewing_photo
@@ -111,11 +112,16 @@ def hide_photo():
     if hasattr(mouse, 'locked'):
         mouse.locked = True
     if player:
-        player.enabled = True
+        if player_control_backup['speed'] is not None:
+            player.speed = player_control_backup['speed']
+            player_control_backup['speed'] = None
+        if player_control_backup['sensitivity'] is not None:
+            player.mouse_sensitivity = player_control_backup['sensitivity']
+            player_control_backup['sensitivity'] = None
+        if hasattr(player, 'cursor'):
+            player.cursor.enabled = True
 
-# -------------------------------
-# CLASSES & HELPERS
-# -------------------------------
+
 class LightSwitch(Entity):
     def __init__(self, position, rotation=(0,0,0), light_source=None, **kwargs):
         super().__init__(
@@ -231,7 +237,7 @@ class Door(Entity):
             position=position,
             rotation=rotation,
             collider='box',
-            origin_x=0.5, # Hinge on the side
+            origin_x=0.5,
             **kwargs
         )
         self.is_open = False
@@ -357,6 +363,19 @@ def haunted_light_color():
     b = max(0, min(70, 20 + uniform(-10, 15)))
     return color.rgb(r, g, b)
 
+
+def spawn_toilet(position, rotation=(0, 0, 0), scale=0.04):
+    toilet = Entity(
+        model=TOILET_MODEL,
+        position=position,
+        rotation=rotation,
+        scale=scale,
+        color=color.rgb(230, 230, 230),
+        collider='mesh'
+    )
+    toilet.y += scale * 9.2
+    return toilet
+
 # -------------------------------
 # GAME WORLD
 # -------------------------------
@@ -377,9 +396,9 @@ def start_game():
 
     if ambient_audio is None:
         ambient_audio = Audio('assets/audio/bg.mp3', loop=True, autoplay=False)
-        ambient_audio.volume = 0.04
+        ambient_audio.volume = 0.8
     if not ambient_audio.playing:
-        ambient_audio.volume = 0.04
+        ambient_audio.volume = 0.8
         ambient_audio.play()
 
     # Player
@@ -570,9 +589,25 @@ def start_game():
             bath_light = PointLight(parent=scene, position=(bath_cx, ROOM_HEIGHT - 1.2, bath_cz), color=color.rgb(190, 205, 220))
             LightSwitch(position=switch_pos, rotation=switch_rot, light_source=bath_light)
 
-            # Simple fixtures for mood
-            Entity(model='cube', color=color.rgb(235, 235, 240), position=(bath_cx - bath_w / 2 + 0.6, 0.45, bath_cz + bath_d / 2 - 0.5), scale=(0.9, 0.9, 0.5))
-            Entity(model='sphere', color=color.rgb(255, 255, 255), position=(bath_cx - bath_w / 2 + 0.6, 1.0, bath_cz + bath_d / 2 - 0.4), scale=0.35, unlit=True)
+            # Add real toilet asset along the side wall relative to entrance
+            toilet_pos = Vec3(bath_cx, 0, bath_cz)
+            toilet_rot = (0, 0, 0)
+            if door_axis == 'south':
+                toilet_pos = Vec3(bath_cx - bath_w / 2 + 0.9, 0, bath_cz + 0.3)
+                toilet_rot = (0, 90, 0)
+            elif door_axis == 'north':
+                toilet_pos = Vec3(bath_cx - bath_w / 2 + 0.9, 0, bath_cz - 0.3)
+                toilet_rot = (0, 90, 0)
+            elif door_axis == 'east':
+                toilet_pos = Vec3(bath_cx - 0.3, 0, bath_cz + bath_d / 2 - 1.0)
+                toilet_rot = (0, 0, 0)
+            else:  # west
+                toilet_pos = Vec3(bath_cx + 0.3, 0, bath_cz + bath_d / 2 - 1.0)
+                toilet_rot = (0, 180, 0)
+            spawn_toilet(position=toilet_pos, rotation=toilet_rot, scale=0.015)
+
+            # Small counter and cabinet to keep scene populated
+            Entity(model='cube', color=color.rgb(235, 235, 240), position=(bath_cx + bath_w / 2 - 0.7, 0.45, bath_cz + bath_d / 2 - 0.6), scale=(0.9, 0.9, 0.5))
             Entity(model='cube', color=color.rgb(200, 200, 205), position=(bath_cx + bath_w / 2 - 0.6, 0.35, bath_cz + bath_d / 2 - 0.6), scale=(0.7, 0.6, 0.7))
 
         add_bathroom()

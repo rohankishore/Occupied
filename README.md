@@ -9,6 +9,7 @@ This is a first-person psychological horror game set inside a large, decaying ho
 
 ### Dec 19 2025
 <img width="1603" height="1034" alt="image" src="https://github.com/user-attachments/assets/ffc8660a-9e13-430b-8660-0580eff2ba71" />
-* Hallways and lights
-* Bathrooms
-* Tables
+
+- Hallways and lights
+- Bathrooms
+- Tables

@@ -119,11 +119,45 @@ class FlickeringLight:
             a
         )
 
+class WallLight(Entity):
+    def __init__(self, position, rotation=(0,0,0), light_color=color.rgb(255, 220, 150), flicker=False, interval_range=(0.08, 0.25), intensity_range=(0.35, 1.0), **kwargs):
+        super().__init__(
+            model='cube',
+            scale=(0.5, 0.8, 0.1), # Tall rectangular light like in image
+            position=position,
+            rotation=rotation,
+            color=color.dark_gray,
+            **kwargs
+        )
+        self.emissive = Entity(
+            parent=self,
+            model='quad',
+            scale=(0.8, 0.9),
+            z=-0.51,
+            color=light_color,
+            unlit=True
+        )
+        self.light = PointLight(
+            parent=self,
+            position=(0, 0, -2),
+            color=light_color,
+            shadows=True
+        )
+        self.light.attenuation = (0.5, 0, 0.05)
+        self.flicker_controller = None
+
+        if flicker:
+            # Register a flicker controller so the hallway lighting stays unsettled
+            controller = FlickeringLight(self.light, interval_range=interval_range, intensity_range=intensity_range)
+            flickering_lights.append(controller)
+            self.flicker_controller = controller
+
 class Door(Entity):
-    def __init__(self, position, rotation=(0,0,0), width=3.2, height=3.5, thickness=0.12, door_color=color.rgb(120, 94, 76), **kwargs):
+    def __init__(self, position, rotation=(0,0,0), width=3.2, height=3.5, thickness=0.12, door_color=color.white, texture='assets/wood1.jpg', **kwargs):
         super().__init__(
             model='cube',
             color=door_color,
+            texture=texture,
             scale=(width, height, thickness),
             position=position,
             rotation=rotation,
@@ -140,17 +174,20 @@ class Door(Entity):
         else:
             self.animate_rotation_y(self.rotation_y - 90, duration=0.5)
 
-def create_wall(position, scale, color=color.white):
+def create_wall(position, scale, color=color.white, texture='assets/wall.jpg', texture_scale=None):
     e = Entity(
         model='cube', 
         position=position, 
         scale=scale, 
         color=color, 
-        texture='white_cube', 
+        texture=texture, 
         collider='box'
     )
-    # Reduce texture repetition on walls too
-    e.texture_scale = (scale[0] * 0.5, scale[1] * 0.5)
+    if texture_scale:
+        e.texture_scale = texture_scale
+    else:
+        # Reduce texture repetition on walls too
+        e.texture_scale = (scale[0] * 0.5, scale[1] * 0.5)
     return e
 
 def create_floor(position, scale):
@@ -186,147 +223,267 @@ def start_game():
 
     # Player
     player = FirstPersonController(
-        speed=6, # Slightly faster for bigger map
+        speed=6,
         mouse_sensitivity=Vec2(40, 40),
-        position=(0, 1, -40) # Start near entrance
+        position=(0, 1, -40)
     )
 
     # -------------------
     # CONSTANTS
     # -------------------
     CORRIDOR_WIDTH = 10
-    CORRIDOR_LENGTH = 100 # -50 to 50
     CORRIDOR_HEIGHT = 6
-    ROOM_SIZE = 14
     ROOM_HEIGHT = 6
+    DOOR_WIDTH = 2.0
+    DOOR_HEIGHT = 3.5
     
-    # Colors
     theme_wall = color.rgb(212, 195, 178)
     theme_ceiling = color.rgb(245, 237, 224)
-    theme_door = color.rgb(100, 80, 70)
+    theme_door = color.white
+    
+    # -------------------
+    # HELPERS
+    # -------------------
+    def make_room(pos, size, door_dir, light_color=color.rgb(80, 70, 10), flicker=False, decorator=None):
+        # pos: (x, z) center of room
+        # size: (width, depth)
+        # door_dir: 'north', 'south', 'east', 'west' (direction pointing INTO the room from corridor)
+        w, d = size
+        x, z = pos
+
+        # Floor and ceiling
+        create_floor(position=(x, 0, z), scale=(w, 1, d))
+        create_wall(position=(x, ROOM_HEIGHT, z), scale=(w, 0.2, d), color=theme_ceiling, texture='assets/rustytiles01_spec.png', texture_scale=(max(1, w/3), max(1, d/3)))
+
+        t = 0.2
+        half_w = w / 2
+        half_d = d / 2
+
+        light_switch_position = None
+        light_switch_rotation = (0, 0, 0)
+
+        if door_dir == 'west':
+            create_wall(position=(x - half_w, ROOM_HEIGHT/2, z), scale=(t, ROOM_HEIGHT, d), color=theme_wall)  # Back
+            create_wall(position=(x, ROOM_HEIGHT/2, z + half_d), scale=(w, ROOM_HEIGHT, t), color=theme_wall)  # Top
+            create_wall(position=(x, ROOM_HEIGHT/2, z - half_d), scale=(w, ROOM_HEIGHT, t), color=theme_wall)  # Bottom
+            light_switch_position = (x + half_w + 0.2, 1.5, z + 2)
+            light_switch_rotation = (0, -90, 0)
+
+        elif door_dir == 'east':
+            create_wall(position=(x + half_w, ROOM_HEIGHT/2, z), scale=(t, ROOM_HEIGHT, d), color=theme_wall)  # Front
+            create_wall(position=(x, ROOM_HEIGHT/2, z + half_d), scale=(w, ROOM_HEIGHT, t), color=theme_wall)  # Top
+            create_wall(position=(x, ROOM_HEIGHT/2, z - half_d), scale=(w, ROOM_HEIGHT, t), color=theme_wall)  # Bottom
+            light_switch_position = (x - half_w - 0.2, 1.5, z + 2)
+            light_switch_rotation = (0, 90, 0)
+
+        elif door_dir == 'north':
+            create_wall(position=(x, ROOM_HEIGHT/2, z + half_d), scale=(w, ROOM_HEIGHT, t), color=theme_wall)  # Top
+            create_wall(position=(x - half_w, ROOM_HEIGHT/2, z), scale=(t, ROOM_HEIGHT, d), color=theme_wall)  # Left
+            create_wall(position=(x + half_w, ROOM_HEIGHT/2, z), scale=(t, ROOM_HEIGHT, d), color=theme_wall)  # Right
+            light_switch_position = (x + 2, 1.5, z - half_d - 0.2)
+            light_switch_rotation = (0, 0, 0)
+
+        elif door_dir == 'south':
+            create_wall(position=(x, ROOM_HEIGHT/2, z - half_d), scale=(w, ROOM_HEIGHT, t), color=theme_wall)  # Bottom
+            create_wall(position=(x - half_w, ROOM_HEIGHT/2, z), scale=(t, ROOM_HEIGHT, d), color=theme_wall)  # Left
+            create_wall(position=(x + half_w, ROOM_HEIGHT/2, z), scale=(t, ROOM_HEIGHT, d), color=theme_wall)  # Right
+            light_switch_position = (x - 2, 1.5, z + half_d + 0.2)
+            light_switch_rotation = (0, 180, 0)
+
+        else:
+            raise ValueError(f'Unsupported door_dir {door_dir}')
+
+        room_light = PointLight(parent=scene, position=(x, ROOM_HEIGHT - 1, z), color=light_color)
+
+        if flicker:
+            flickering_lights.append(FlickeringLight(room_light, interval_range=(0.05, 0.3), intensity_range=(0.15, 1.0)))
+
+        if light_switch_position:
+            LightSwitch(position=light_switch_position, rotation=light_switch_rotation, light_source=room_light)
+
+        if decorator:
+            decorator(center=(x, z), size=(w, d))
+
+    def add_occult_circle(center, size):
+        cx, cz = center
+        Entity(
+            model='quad',
+            color=color.rgb(120, 0, 0),
+            position=(cx, 0.04, cz),
+            rotation_x=90,
+            scale=(size[0] * 0.7, size[1] * 0.7),
+            unlit=True
+        )
+        Entity(
+            model='quad',
+            color=color.rgb(200, 40, 40),
+            position=(cx, 2.4, cz + size[1] * 0.18),
+            scale=(2.4, 1.2),
+            unlit=True
+        )
+        Entity(
+            model='cube',
+            color=color.rgb(30, 30, 30),
+            position=(cx, 0.6, cz - size[1] * 0.25),
+            scale=(size[0] * 0.5, 1.1, 0.6)
+        )
+        for offset in (-1.2, 0, 1.2):
+            Entity(
+                model='cylinder',
+                color=color.rgb(200, 160, 90),
+                position=(cx + offset, 0.6, cz + size[1] * 0.18),
+                scale=(0.12, 0.6, 0.12)
+            )
+            Entity(
+                model='sphere',
+                color=color.rgb(255, 210, 120),
+                position=(cx + offset, 1.0, cz + size[1] * 0.18),
+                scale=0.2,
+                unlit=True
+            )
+
+    def add_storage_abattoir(center, size):
+        cx, cz = center
+        Entity(
+            model='quad',
+            color=color.rgb(140, 0, 0),
+            position=(cx - size[0] * 0.2, 0.04, cz + size[1] * 0.15),
+            rotation_x=90,
+            scale=(size[0] * 0.5, size[1] * 0.4),
+            unlit=True
+        )
+        Entity(
+            model='cube',
+            color=color.rgb(45, 45, 45),
+            position=(cx + size[0] * 0.25, 1.2, cz - size[1] * 0.1),
+            scale=(size[0] * 0.4, 2.5, size[1] * 0.2)
+        )
+        for n in range(3):
+            Entity(
+                model='cube',
+                color=color.rgb(25, 20, 20),
+                position=(cx - size[0] * 0.25 + n * 1.2, 2.0, cz - size[1] * 0.2),
+                scale=(0.4, 1.6, 0.4)
+            )
+        Entity(
+            model='quad',
+            color=color.rgb(255, 120, 120),
+            position=(cx, 3.5, cz + size[1] * 0.4),
+            rotation=(90, 0, 0),
+            scale=(size[0] * 0.6, size[1] * 0.2),
+            unlit=True
+        )
 
     # -------------------
-    # GROUND FLOOR
+    # LAYOUT GENERATION
     # -------------------
     
-    # Main Corridor Floor
-    create_floor(position=(0, 0, 0), scale=(CORRIDOR_WIDTH, 1, CORRIDOR_LENGTH))
+    # --- SEGMENT A (Entrance) ---
+    # From Z=-50 to Z=0
+    # Floor & Ceiling
+    create_floor(position=(0, 0, -25), scale=(CORRIDOR_WIDTH, 1, 50))
+    create_wall(position=(0, CORRIDOR_HEIGHT, -25), scale=(CORRIDOR_WIDTH, 0.2, 50), color=theme_ceiling, texture='assets/rustytiles01_spec.png', texture_scale=(3, 15))
     
-    # Main Corridor Ceiling
-    create_wall(position=(0, CORRIDOR_HEIGHT, 0), scale=(CORRIDOR_WIDTH, 0.2, CORRIDOR_LENGTH), color=theme_ceiling)
+    # Entrance Wall
+    create_wall(position=(0, CORRIDOR_HEIGHT/2, -50), scale=(CORRIDOR_WIDTH, CORRIDOR_HEIGHT, 0.2), color=theme_wall)
+
+    # Left Wall (X=-5)
+    # Room 1 (Small) at Z=-40
+    create_wall(position=(-5, CORRIDOR_HEIGHT/2, -45.5), scale=(0.2, CORRIDOR_HEIGHT, 9), color=theme_wall)
+    create_wall(position=(-5, CORRIDOR_HEIGHT - 1.2, -40), scale=(0.2, 2.4, DOOR_WIDTH), color=theme_wall) # Header
+    Door(position=(-5, DOOR_HEIGHT/2, -40 + DOOR_WIDTH/2), rotation=(0, -90, 0), width=DOOR_WIDTH, height=DOOR_HEIGHT, door_color=theme_door)
+    create_wall(position=(-5, CORRIDOR_HEIGHT/2, -17), scale=(0.2, CORRIDOR_HEIGHT, 44), color=theme_wall)
     
-    # Entrance Wall (at z = -50)
-    create_wall(position=(0, CORRIDOR_HEIGHT/2, -CORRIDOR_LENGTH/2), scale=(CORRIDOR_WIDTH, CORRIDOR_HEIGHT, 0.2), color=theme_wall)
+    make_room((-9, -40), (8, 8), 'west')
 
-    # Generate Rooms along the corridor
-    # We'll place rooms every 20 units, from -30 to 30
-    room_z_positions = [-30, -10, 10, 30]
+    # Right Wall (X=5)
+    # Room 2 (Big) at Z=-15
+    create_wall(position=(5, CORRIDOR_HEIGHT/2, -33), scale=(0.2, CORRIDOR_HEIGHT, 34), color=theme_wall)
+    create_wall(position=(5, CORRIDOR_HEIGHT - 1.2, -15), scale=(0.2, 2.4, DOOR_WIDTH), color=theme_wall) # Header
+    Door(position=(5, DOOR_HEIGHT/2, -15 - DOOR_WIDTH/2), rotation=(0, 90, 0), width=DOOR_WIDTH, height=DOOR_HEIGHT, door_color=theme_door)
+    create_wall(position=(5, CORRIDOR_HEIGHT/2, -9.5), scale=(0.2, CORRIDOR_HEIGHT, 9), color=theme_wall)
     
-    # Continuous Corridor Walls with Door Gaps
-    # Corridor runs from -50 to 50.
-    # Door gaps are at z +/- 1.75 for each room z.
-    # We build walls in segments.
+    make_room((12, -15), (14, 14), 'east')
+
+    # Lights Segment A
+    for z in range(-40, -5, 15):
+        WallLight(position=(-4.8, 4, z), rotation=(0, 90, 0), flicker=(z % 30 == 0))
+        WallLight(position=(4.8, 4, z), rotation=(0, -90, 0), flicker=(z % 20 == 0), intensity_range=(0.1, 0.85))
+
+    # --- INTERSECTION 1 (A -> B) ---
+    # Fill missing corner (-5 to 0, 0 to 5)
+    create_floor(position=(-2.5, 0, 2.5), scale=(5, 1, 5))
+    create_wall(position=(-2.5, CORRIDOR_HEIGHT, 2.5), scale=(5, 0.2, 5), color=theme_ceiling, texture='assets/wood.jpg', texture_scale=(1.5, 1.5))
+    create_wall(position=(-5, CORRIDOR_HEIGHT/2, 2.5), scale=(0.2, CORRIDOR_HEIGHT, 5), color=theme_wall)
+    create_wall(position=(-2.5, CORRIDOR_HEIGHT/2, 5), scale=(5, CORRIDOR_HEIGHT, 0.2), color=theme_wall)
+
+    # --- SEGMENT B (The Turn) ---
+    # From X=0 to X=30 (at Z=0)
+    # Floor & Ceiling
+    create_floor(position=(15, 0, 0), scale=(30, 1, CORRIDOR_WIDTH))
+    create_wall(position=(15, CORRIDOR_HEIGHT, 0), scale=(30, 0.2, CORRIDOR_WIDTH), color=theme_ceiling, texture='assets/wood.jpg', texture_scale=(10, 3))
     
-    # Calculate segments
-    segments = []
-    current_z = -50
+    # Top Wall (Z=5)
+    # Room 3 (Small) at X=15
+    create_wall(position=(4.5, CORRIDOR_HEIGHT/2, 5), scale=(19, CORRIDOR_HEIGHT, 0.2), color=theme_wall)
+    create_wall(position=(15, CORRIDOR_HEIGHT - 1.2, 5), scale=(DOOR_WIDTH, 2.4, 0.2), color=theme_wall) # Header
+    Door(position=(15 - DOOR_WIDTH/2, DOOR_HEIGHT/2, 5), rotation=(0, 0, 0), width=DOOR_WIDTH, height=DOOR_HEIGHT, door_color=theme_door)
+    create_wall(position=(20.5, CORRIDOR_HEIGHT/2, 5), scale=(9, CORRIDOR_HEIGHT, 0.2), color=theme_wall)
     
-    for z in room_z_positions:
-        # Wall before door
-        gap_start = z - 1.75
-        if gap_start > current_z:
-            length = gap_start - current_z
-            center = current_z + length/2
-            segments.append((center, length))
-        
-        # Door gap is skipped (z-1.75 to z+1.75)
-        current_z = z + 1.75
-        
-    # Final segment
-    if current_z < 50:
-        length = 50 - current_z
-        center = current_z + length/2
-        segments.append((center, length))
-        
-    # Create Corridor Walls from segments
-    for center, length in segments:
-        # Left Wall
-        create_wall(position=(-CORRIDOR_WIDTH/2, ROOM_HEIGHT/2, center), scale=(0.2, ROOM_HEIGHT, length), color=theme_wall)
-        # Right Wall
-        create_wall(position=(CORRIDOR_WIDTH/2, ROOM_HEIGHT/2, center), scale=(0.2, ROOM_HEIGHT, length), color=theme_wall)
+    make_room((15, 10), (10, 10), 'north')
+    
+    # Bottom Wall (Z=-5)
+    create_wall(position=(20, CORRIDOR_HEIGHT/2, -5), scale=(30, CORRIDOR_HEIGHT, 0.2), color=theme_wall)
 
-    # Create Rooms and Doors
-    for i, z in enumerate(room_z_positions):
-        # --- LEFT ROOM ---
-        # Room Floor
-        create_floor(position=(-(CORRIDOR_WIDTH/2 + ROOM_SIZE/2), 0, z), scale=(ROOM_SIZE, 1, ROOM_SIZE))
-        # Room Ceiling
-        create_wall(position=(-(CORRIDOR_WIDTH/2 + ROOM_SIZE/2), ROOM_HEIGHT, z), scale=(ROOM_SIZE, 0.2, ROOM_SIZE), color=theme_ceiling)
-        # Room Walls (Back, Left, Front)
-        create_wall(position=(-(CORRIDOR_WIDTH/2 + ROOM_SIZE), ROOM_HEIGHT/2, z), scale=(0.2, ROOM_HEIGHT, ROOM_SIZE), color=theme_wall) # Far Left
-        create_wall(position=(-(CORRIDOR_WIDTH/2 + ROOM_SIZE/2), ROOM_HEIGHT/2, z + ROOM_SIZE/2), scale=(ROOM_SIZE, ROOM_HEIGHT, 0.2), color=theme_wall) # Front
-        create_wall(position=(-(CORRIDOR_WIDTH/2 + ROOM_SIZE/2), ROOM_HEIGHT/2, z - ROOM_SIZE/2), scale=(ROOM_SIZE, ROOM_HEIGHT, 0.2), color=theme_wall) # Back
-        
-        # Header above door
-        create_wall(position=(-CORRIDOR_WIDTH/2, ROOM_HEIGHT - 1.2, z), scale=(0.2, 2.4, 3.5), color=theme_wall)
+    # Lights Segment B
+    for x in range(5, 30, 15):
+        WallLight(position=(x, 4, 4.8), rotation=(0, 180, 0), flicker=(x == 20), intensity_range=(0.05, 0.8))
+        WallLight(position=(x, 4, -4.8), rotation=(0, 0, 0), flicker=(x == 5))
 
-        # Door (Rotated 90 deg to fit in wall, Hinge at z-1.75)
-        # Position: x=-5, y=1.85, z=z+1.75. Rot: (0, -90, 0) -> Extends to z-1.75
-        Door(position=(-CORRIDOR_WIDTH/2, 1.85, z + 1.75), rotation=(0, -90, 0), width=3.5, door_color=theme_door)
-        
-        # Light
-        l = PointLight(parent=scene, position=(-(CORRIDOR_WIDTH/2 + ROOM_SIZE/2), ROOM_HEIGHT-1, z), color=color.random_color())
-        LightSwitch(position=(-CORRIDOR_WIDTH/2 - 0.2, 1.5, z + 2), rotation=(0, 90, 0), light_source=l)
+    # --- INTERSECTION 2 (B -> C) ---
+    # Fill missing corner (30 to 35, -5 to 0)
+    create_floor(position=(32.5, 0, -2.5), scale=(5, 1, 5))
+    create_wall(position=(32.5, CORRIDOR_HEIGHT, -2.5), scale=(5, 0.2, 5), color=theme_ceiling, texture='assets/wood.jpg', texture_scale=(1.5, 1.5))
+    create_wall(position=(35, CORRIDOR_HEIGHT/2, -2.5), scale=(0.2, CORRIDOR_HEIGHT, 5), color=theme_wall)
+    create_wall(position=(32.5, CORRIDOR_HEIGHT/2, -5), scale=(5, CORRIDOR_HEIGHT, 0.2), color=theme_wall)
 
+    # --- SEGMENT C (To Stairs) ---
+    # From Z=0 to Z=40 (at X=30)
+    # Floor & Ceiling
+    create_floor(position=(30, 0, 20), scale=(CORRIDOR_WIDTH, 1, 40))
+    create_wall(position=(30, CORRIDOR_HEIGHT, 20), scale=(CORRIDOR_WIDTH, 0.2, 40), color=theme_ceiling, texture='assets/wood.jpg', texture_scale=(3, 12))
+    
+    # Left Wall (X=25)
+    create_wall(position=(25, CORRIDOR_HEIGHT/2, 22.5), scale=(0.2, CORRIDOR_HEIGHT, 35), color=theme_wall)
+    
+    # Right Wall (X=35)
+    # Room 4 (Big) at Z=25
+    create_wall(position=(35, CORRIDOR_HEIGHT/2, 9.5), scale=(0.2, CORRIDOR_HEIGHT, 29), color=theme_wall)
+    create_wall(position=(35, CORRIDOR_HEIGHT - 1.2, 25), scale=(0.2, 2.4, DOOR_WIDTH), color=theme_wall) # Header
+    Door(position=(35, DOOR_HEIGHT/2, 25 - DOOR_WIDTH/2), rotation=(0, 90, 0), width=DOOR_WIDTH, height=DOOR_HEIGHT, door_color=theme_door)
+    create_wall(position=(35, CORRIDOR_HEIGHT/2, 33), scale=(0.2, CORRIDOR_HEIGHT, 14), color=theme_wall)
+    
+    make_room((42, 25), (12, 12), 'east')
 
-        # --- RIGHT ROOM ---
-        # Room Floor
-        create_floor(position=((CORRIDOR_WIDTH/2 + ROOM_SIZE/2), 0, z), scale=(ROOM_SIZE, 1, ROOM_SIZE))
-        # Room Ceiling
-        create_wall(position=((CORRIDOR_WIDTH/2 + ROOM_SIZE/2), ROOM_HEIGHT, z), scale=(ROOM_SIZE, 0.2, ROOM_SIZE), color=theme_ceiling)
-        # Room Walls
-        create_wall(position=((CORRIDOR_WIDTH/2 + ROOM_SIZE), ROOM_HEIGHT/2, z), scale=(0.2, ROOM_HEIGHT, ROOM_SIZE), color=theme_wall) # Far Right
-        create_wall(position=((CORRIDOR_WIDTH/2 + ROOM_SIZE/2), ROOM_HEIGHT/2, z + ROOM_SIZE/2), scale=(ROOM_SIZE, ROOM_HEIGHT, 0.2), color=theme_wall) # Front
-        create_wall(position=((CORRIDOR_WIDTH/2 + ROOM_SIZE/2), ROOM_HEIGHT/2, z - ROOM_SIZE/2), scale=(ROOM_SIZE, ROOM_HEIGHT, 0.2), color=theme_wall) # Back
-        
-        # Header above door
-        create_wall(position=(CORRIDOR_WIDTH/2, ROOM_HEIGHT - 1.2, z), scale=(0.2, 2.4, 3.5), color=theme_wall)
-
-        # Door (Rotated 90 deg, Hinge at z-1.75)
-        # Position: x=5, y=1.85, z=z-1.75. Rot: (0, 90, 0) -> Extends to z+1.75
-        Door(position=(CORRIDOR_WIDTH/2, 1.85, z - 1.75), rotation=(0, 90, 0), width=3.5, door_color=theme_door)
-        
-        # Light
-        l = PointLight(parent=scene, position=((CORRIDOR_WIDTH/2 + ROOM_SIZE/2), ROOM_HEIGHT-1, z), color=color.random_color())
-        LightSwitch(position=(CORRIDOR_WIDTH/2 + 0.2, 1.5, z + 2), rotation=(0, -90, 0), light_source=l)
-
-    # Corridor Lights (Ground)
-    warm_yellow = color.rgb(255, 180, 80) # Dimly warm yellow
-    for z in range(-40, 50, 20):
-        light = PointLight(parent=scene, position=(0, CORRIDOR_HEIGHT-1, z), color=warm_yellow)
-        flickering_lights.append(FlickeringLight(light, intensity_range=(0.4, 0.9)))
-
-    # Corridor Lights (Upper)
-    for z in range(-40, 50, 20):
-        light = PointLight(parent=scene, position=(0, landing_height + CORRIDOR_HEIGHT-1, z), color=warm_yellow)
-        flickering_lights.append(FlickeringLight(light, intensity_range=(0.4, 0.9)))
+    # Lights Segment C
+    for z in range(10, 35, 15):
+        WallLight(position=(25.2, 4, z), rotation=(0, 90, 0), flicker=(z == 25), intensity_range=(0.08, 0.9))
+        WallLight(position=(34.8, 4, z), rotation=(0, -90, 0), flicker=(z != 10))
 
     # -------------------
-    # STAIRCASE (Grand)
+    # STAIRCASE
     # -------------------
-    # At z = 50 (End of corridor)
-    # Wide stairs in the middle
-    stair_z_start = CORRIDOR_LENGTH/2 # 50
+    stair_z_start = 40
+    stair_x = 30
     
     # Floor for stair area
-    create_floor(position=(0, 0, stair_z_start + 10), scale=(CORRIDOR_WIDTH, 1, 20))
-    # Ceiling for stair area (higher?)
-    create_wall(position=(0, CORRIDOR_HEIGHT + 4, stair_z_start + 10), scale=(CORRIDOR_WIDTH, 0.2, 20), color=theme_ceiling)
+    create_floor(position=(stair_x, 0, stair_z_start + 10), scale=(CORRIDOR_WIDTH, 1, 20))
+    create_wall(position=(stair_x, CORRIDOR_HEIGHT + 4, stair_z_start + 10), scale=(CORRIDOR_WIDTH, 0.2, 20), color=theme_ceiling, texture='assets/wood.jpg', texture_scale=(3, 6))
     
     # Walls around stairwell
-    create_wall(position=(-CORRIDOR_WIDTH/2, CORRIDOR_HEIGHT/2 + 2, stair_z_start + 10), scale=(0.2, CORRIDOR_HEIGHT+4, 20), color=theme_wall)
-    create_wall(position=(CORRIDOR_WIDTH/2, CORRIDOR_HEIGHT/2 + 2, stair_z_start + 10), scale=(0.2, CORRIDOR_HEIGHT+4, 20), color=theme_wall)
-    create_wall(position=(0, CORRIDOR_HEIGHT/2 + 2, stair_z_start + 20), scale=(CORRIDOR_WIDTH, CORRIDOR_HEIGHT+4, 0.2), color=theme_wall) # Back wall
+    create_wall(position=(stair_x - 5, CORRIDOR_HEIGHT/2 + 2, stair_z_start + 10), scale=(0.2, CORRIDOR_HEIGHT+4, 20), color=theme_wall)
+    create_wall(position=(stair_x + 5, CORRIDOR_HEIGHT/2 + 2, stair_z_start + 10), scale=(0.2, CORRIDOR_HEIGHT+4, 20), color=theme_wall)
+    create_wall(position=(stair_x, CORRIDOR_HEIGHT/2 + 2, stair_z_start + 20), scale=(CORRIDOR_WIDTH, CORRIDOR_HEIGHT+4, 0.2), color=theme_wall)
 
     # Steps
     for i in range(20):
@@ -334,72 +491,105 @@ def start_game():
             model='cube',
             color=color.rgb(100, 100, 100),
             texture='assets/wood1.jpg',
-            position=(0, i*0.3, stair_z_start + i*0.5),
+            position=(stair_x, i*0.3, stair_z_start + i*0.5),
             scale=(6, 0.3, 0.5),
             collider='box'
         )
     
     # Landing at top
-    landing_z = stair_z_start + 10 # 60
-    landing_height = 6 # Match CORRIDOR_HEIGHT roughly? 20*0.3 = 6. Perfect.
-    
-    create_floor(position=(0, landing_height, landing_z + 5), scale=(CORRIDOR_WIDTH, 1, 10))
+    landing_z = stair_z_start + 10
+    landing_height = 6
+    create_floor(position=(stair_x, landing_height, landing_z + 5), scale=(CORRIDOR_WIDTH, 1, 10))
 
-    # -------------------
-    # UPPER FLOOR
-    # -------------------
-    # Upper Corridor (Same layout as bottom)
-    # Floor
-    create_floor(position=(0, landing_height, 0), scale=(CORRIDOR_WIDTH, 1, CORRIDOR_LENGTH))
-    # Ceiling
-    create_wall(position=(0, landing_height + CORRIDOR_HEIGHT, 0), scale=(CORRIDOR_WIDTH, 0.2, CORRIDOR_LENGTH), color=theme_ceiling)
-    
-    # Upper Entrance Wall (at z = -50)
-    create_wall(position=(0, landing_height + CORRIDOR_HEIGHT/2, -CORRIDOR_LENGTH/2), scale=(CORRIDOR_WIDTH, CORRIDOR_HEIGHT, 0.2), color=theme_wall)
+    # Upper level corridor extension
+    upper_length = 40
+    upper_start = landing_z + 5
+    upper_end = upper_start + upper_length
+    upper_center = upper_start + upper_length / 2
+    upper_wall_y = landing_height + CORRIDOR_HEIGHT / 2
 
-    # Generate Upper Rooms
-    for i, z in enumerate(room_z_positions):
-        # --- LEFT ROOM ---
-        create_floor(position=(-(CORRIDOR_WIDTH/2 + ROOM_SIZE/2), landing_height, z), scale=(ROOM_SIZE, 1, ROOM_SIZE))
-        create_wall(position=(-(CORRIDOR_WIDTH/2 + ROOM_SIZE/2), landing_height + ROOM_HEIGHT, z), scale=(ROOM_SIZE, 0.2, ROOM_SIZE), color=theme_ceiling)
-        create_wall(position=(-(CORRIDOR_WIDTH/2 + ROOM_SIZE), landing_height + ROOM_HEIGHT/2, z), scale=(0.2, ROOM_HEIGHT, ROOM_SIZE), color=theme_wall)
-        create_wall(position=(-(CORRIDOR_WIDTH/2 + ROOM_SIZE/2), landing_height + ROOM_HEIGHT/2, z + ROOM_SIZE/2), scale=(ROOM_SIZE, ROOM_HEIGHT, 0.2), color=theme_wall)
-        create_wall(position=(-(CORRIDOR_WIDTH/2 + ROOM_SIZE/2), landing_height + ROOM_HEIGHT/2, z - ROOM_SIZE/2), scale=(ROOM_SIZE, ROOM_HEIGHT, 0.2), color=theme_wall)
-        
-        # Header
-        create_wall(position=(-CORRIDOR_WIDTH/2, landing_height + ROOM_HEIGHT - 1.2, z), scale=(0.2, 2.4, 3.5), color=theme_wall)
+    create_floor(position=(stair_x, landing_height, upper_center), scale=(CORRIDOR_WIDTH, 1, upper_length))
+    create_wall(
+        position=(stair_x, landing_height + CORRIDOR_HEIGHT, upper_center),
+        scale=(CORRIDOR_WIDTH, 0.2, upper_length),
+        color=theme_ceiling,
+        texture='assets/wood.jpg',
+        texture_scale=(3, max(3, upper_length / 6))
+    )
 
-        # Door (Rotated 90 deg, Hinge at z-1.75)
-        Door(position=(-CORRIDOR_WIDTH/2, landing_height + 1.85, z + 1.75), rotation=(0, -90, 0), width=3.5, door_color=theme_door)
-        
-        l = PointLight(parent=scene, position=(-(CORRIDOR_WIDTH/2 + ROOM_SIZE/2), landing_height + ROOM_HEIGHT-1, z), color=color.random_color())
-        LightSwitch(position=(-CORRIDOR_WIDTH/2 - 0.2, landing_height + 1.5, z + 2), rotation=(0, 90, 0), light_source=l)
+    left_wall_start = upper_start + 6
+    left_door_flush = upper_start + 12
+    right_wall_start = upper_start + 6
+    right_door_flush = upper_start + 22
 
-        # --- RIGHT ROOM ---
-        create_floor(position=((CORRIDOR_WIDTH/2 + ROOM_SIZE/2), landing_height, z), scale=(ROOM_SIZE, 1, ROOM_SIZE))
-        create_wall(position=((CORRIDOR_WIDTH/2 + ROOM_SIZE/2), landing_height + ROOM_HEIGHT, z), scale=(ROOM_SIZE, 0.2, ROOM_SIZE), color=theme_ceiling)
-        create_wall(position=((CORRIDOR_WIDTH/2 + ROOM_SIZE), landing_height + ROOM_HEIGHT/2, z), scale=(0.2, ROOM_HEIGHT, ROOM_SIZE), color=theme_wall)
-        create_wall(position=((CORRIDOR_WIDTH/2 + ROOM_SIZE/2), landing_height + ROOM_HEIGHT/2, z + ROOM_SIZE/2), scale=(ROOM_SIZE, ROOM_HEIGHT, 0.2), color=theme_wall)
-        create_wall(position=((CORRIDOR_WIDTH/2 + ROOM_SIZE/2), landing_height + ROOM_HEIGHT/2, z - ROOM_SIZE/2), scale=(ROOM_SIZE, ROOM_HEIGHT, 0.2), color=theme_wall)
-        
-        # Header
-        create_wall(position=(CORRIDOR_WIDTH/2, landing_height + ROOM_HEIGHT - 0.5, z), scale=(0.2, 1, 3.5), color=theme_wall)
+    # Left wall segments (west side)
+    create_wall(
+        position=(stair_x - CORRIDOR_WIDTH / 2, upper_wall_y, (left_wall_start + left_door_flush) / 2),
+        scale=(0.2, CORRIDOR_HEIGHT, max(0.2, left_door_flush - left_wall_start)),
+        color=theme_wall
+    )
+    create_wall(
+        position=(stair_x - CORRIDOR_WIDTH / 2, upper_wall_y, (left_door_flush + DOOR_WIDTH + upper_end) / 2),
+        scale=(0.2, CORRIDOR_HEIGHT, max(0.2, upper_end - (left_door_flush + DOOR_WIDTH))),
+        color=theme_wall
+    )
 
-        # Door (Rotated 90 deg, Hinge at z-1.75)
-        Door(position=(CORRIDOR_WIDTH/2, landing_height + 1.85, z - 1.75), rotation=(0, 90, 0), width=3.5, door_color=theme_door)
-        
-        l = PointLight(parent=scene, position=((CORRIDOR_WIDTH/2 + ROOM_SIZE/2), landing_height + ROOM_HEIGHT-1, z), color=color.random_color())
-        LightSwitch(position=(CORRIDOR_WIDTH/2 + 0.2, landing_height + 1.5, z + 2), rotation=(0, -90, 0), light_source=l)
+    # Right wall segments (east side)
+    create_wall(
+        position=(stair_x + CORRIDOR_WIDTH / 2, upper_wall_y, (right_wall_start + right_door_flush) / 2),
+        scale=(0.2, CORRIDOR_HEIGHT, max(0.2, right_door_flush - right_wall_start)),
+        color=theme_wall
+    )
+    create_wall(
+        position=(stair_x + CORRIDOR_WIDTH / 2, upper_wall_y, (right_door_flush + DOOR_WIDTH + upper_end) / 2),
+        scale=(0.2, CORRIDOR_HEIGHT, max(0.2, upper_end - (right_door_flush + DOOR_WIDTH))),
+        color=theme_wall
+    )
 
-    # Upper Corridor Walls (Continuous)
-    for center, length in segments:
-        # Left Wall
-        create_wall(position=(-CORRIDOR_WIDTH/2, landing_height + ROOM_HEIGHT/2, center), scale=(0.2, ROOM_HEIGHT, length), color=theme_wall)
-        # Right Wall
-        create_wall(position=(CORRIDOR_WIDTH/2, landing_height + ROOM_HEIGHT/2, center), scale=(0.2, ROOM_HEIGHT, length), color=theme_wall)
+    # Corridor end cap
+    create_wall(
+        position=(stair_x, upper_wall_y, upper_end),
+        scale=(CORRIDOR_WIDTH, CORRIDOR_HEIGHT, 0.2),
+        color=theme_wall
+    )
+
+    # Doors to upper rooms
+    Door(position=(stair_x - CORRIDOR_WIDTH / 2, DOOR_HEIGHT/2 + landing_height, left_door_flush + DOOR_WIDTH/2), rotation=(0, -90, 0), width=DOOR_WIDTH, height=DOOR_HEIGHT, door_color=theme_door)
+    Door(position=(stair_x + CORRIDOR_WIDTH / 2, DOOR_HEIGHT/2 + landing_height, right_door_flush + DOOR_WIDTH/2), rotation=(0, 90, 0), width=DOOR_WIDTH, height=DOOR_HEIGHT, door_color=theme_door)
+
+    # Upper rooms
+    left_room_center = (stair_x - CORRIDOR_WIDTH / 2 - 6, left_door_flush + DOOR_WIDTH)
+    right_room_center = (stair_x + CORRIDOR_WIDTH / 2 + 6, right_door_flush + DOOR_WIDTH)
+    make_room(left_room_center, (12, 14), 'west', light_color=color.rgb(140, 50, 20), flicker=True, decorator=add_occult_circle)
+    make_room(right_room_center, (10, 12), 'east', light_color=color.rgb(90, 20, 20), flicker=True, decorator=add_storage_abattoir)
+
+    # Upper hallway lighting and props
+    for z in range(int(upper_start + 8), int(upper_end), 12):
+        WallLight(position=(stair_x - CORRIDOR_WIDTH / 2 + 0.2, landing_height + 4, z), rotation=(0, 90, 0), flicker=True, intensity_range=(0.1, 0.9))
+        WallLight(position=(stair_x + CORRIDOR_WIDTH / 2 - 0.2, landing_height + 4, z), rotation=(0, -90, 0), flicker=(z % 24 == 0), intensity_range=(0.05, 0.8))
+
+    dread_light = PointLight(parent=scene, position=(stair_x, landing_height + 3.5, upper_end - 3), color=color.rgb(180, 20, 20), shadows=True)
+    flickering_lights.append(FlickeringLight(dread_light, interval_range=(0.02, 0.15), intensity_range=(0.03, 0.7)))
+
+    Entity(
+        model='quad',
+        color=color.rgb(150, 0, 0),
+        position=(stair_x, landing_height + 0.05, upper_end - 3),
+        rotation_x=90,
+        scale=(4, 2),
+        unlit=True
+    )
+
+    Entity(
+        model='quad',
+        color=color.rgb(20, 20, 20),
+        position=(stair_x, landing_height + 2.4, upper_end - 2),
+        scale=(1.6, 3.6),
+        billboard=True
+    )
 
     # Ambient light
-    AmbientLight(color=color.rgba(30, 30, 30, 255))
+    AmbientLight(color=color.rgba(6, 6, 6, 255))
 
 # -------------------------------
 # INPUT HANDLING

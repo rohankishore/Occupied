@@ -13,7 +13,8 @@ game_state = 'splash' if SHOW_SPLASH else 'game'
 flickering_lights = []
 ambient_audio = None
 player_control_backup = {'speed': None, 'sensitivity': None}
-TOILET_MODEL = 'assets/3d/10778_Toilet_V2.obj'
+TOILET_MODEL = 'assets/3d/Toilet.obj'
+BED_MODEL = 'assets/3d/bed.obj'
 
 
 splash_bg = Entity(
@@ -309,7 +310,7 @@ class PhotoTable(Entity):
             parent=frame,
             model='quad',
             texture=photo_texture,
-            rotation=(0, 0, 0),
+            rotation=(0, 0, 180),
             position=(0, 0, -0.02),
             scale=(0.9, 0.9),
             unlit=True
@@ -364,17 +365,33 @@ def haunted_light_color():
     return color.rgb(r, g, b)
 
 
-def spawn_toilet(position, rotation=(0, 0, 0), scale=0.04):
+def spawn_toilet(position, rotation=(0, 0, 0), scale=0.5):
     toilet = Entity(
         model=TOILET_MODEL,
         position=position,
         rotation=rotation,
         scale=scale,
-        color=color.rgb(230, 230, 230),
-        collider='mesh'
+        color=color.white,
+        collider='box',
+        unlit=False
     )
-    toilet.y += scale * 9.2
+    toilet.y = position.y
     return toilet
+
+def spawn_bed(position, rotation=(0, 0, 0), scale=0.8):
+    if isinstance(position, tuple):
+        position = Vec3(*position)
+    bed = Entity(
+        model=BED_MODEL,
+        position=position,
+        rotation=rotation,
+        scale=scale,
+        color=color.white,
+        collider='box',
+        unlit=False
+    )
+    bed.y = position.y
+    return bed
 
 # -------------------------------
 # GAME WORLD
@@ -405,8 +422,11 @@ def start_game():
     player = FirstPersonController(
         speed=6,
         mouse_sensitivity=Vec2(40, 40),
-        position=(0, 1, -40)
+        position=(0, 1, -40),
+        gravity=1,
+        jump_height=2
     )
+    player.collider = 'box'
 
     # -------------------
     # CONSTANTS
@@ -593,18 +613,18 @@ def start_game():
             toilet_pos = Vec3(bath_cx, 0, bath_cz)
             toilet_rot = (0, 0, 0)
             if door_axis == 'south':
-                toilet_pos = Vec3(bath_cx - bath_w / 2 + 0.9, 0, bath_cz + 0.3)
+                toilet_pos = Vec3(bath_cx - bath_w / 2 + 0.9, 0, bath_cz + 0.6)
                 toilet_rot = (0, 90, 0)
             elif door_axis == 'north':
-                toilet_pos = Vec3(bath_cx - bath_w / 2 + 0.9, 0, bath_cz - 0.3)
+                toilet_pos = Vec3(bath_cx - bath_w / 2 + 0.9, 0, bath_cz - 0.6)
                 toilet_rot = (0, 90, 0)
             elif door_axis == 'east':
-                toilet_pos = Vec3(bath_cx - 0.3, 0, bath_cz + bath_d / 2 - 1.0)
+                toilet_pos = Vec3(bath_cx - 0.3, 0, bath_cz + bath_d / 2 - 1.3)
                 toilet_rot = (0, 0, 0)
             else:  # west
-                toilet_pos = Vec3(bath_cx + 0.3, 0, bath_cz + bath_d / 2 - 1.0)
+                toilet_pos = Vec3(bath_cx + 0.3, 0, bath_cz + bath_d / 2 - 1.3)
                 toilet_rot = (0, 180, 0)
-            spawn_toilet(position=toilet_pos, rotation=toilet_rot, scale=0.015)
+            spawn_toilet(position=toilet_pos, rotation=toilet_rot, scale=0.5)
 
             # Small counter and cabinet to keep scene populated
             Entity(model='cube', color=color.rgb(235, 235, 240), position=(bath_cx + bath_w / 2 - 0.7, 0.45, bath_cz + bath_d / 2 - 0.6), scale=(0.9, 0.9, 0.5))
@@ -689,6 +709,30 @@ def start_game():
             texture_path = photo_textures[photo_index % len(photo_textures)]
             photo_index += 1
             PhotoTable(position=position, rotation=rotation, photo_texture=texture_path)
+
+        return decorator
+
+    def add_bed_factory(door_direction):
+        def decorator(center, size):
+            cx, cz = center
+            w, d = size
+            wall_offset = 2.0
+            y = 0
+
+            if door_direction == 'west':
+                bed_pos = (cx - w / 2 + wall_offset, y, cz + d / 4)
+                bed_rot = (0, 90, 0)
+            elif door_direction == 'east':
+                bed_pos = (cx + w / 2 - wall_offset, y, cz + d / 4)
+                bed_rot = (0, -90, 0)
+            elif door_direction == 'north':
+                bed_pos = (cx - w / 4, y, cz + d / 2 - wall_offset)
+                bed_rot = (0, 180, 0)
+            else:  # 'south'
+                bed_pos = (cx - w / 4, y, cz - d / 2 + wall_offset)
+                bed_rot = (0, 0, 0)
+
+            spawn_bed(position=bed_pos, rotation=bed_rot, scale=0.8)
 
         return decorator
 
@@ -789,7 +833,7 @@ def start_game():
     Door(position=(-5, DOOR_HEIGHT/2, -40 + DOOR_WIDTH/2), rotation=(0, -90, 0), width=DOOR_WIDTH, height=DOOR_HEIGHT, door_color=theme_door)
     create_wall(position=(-5, CORRIDOR_HEIGHT/2, -17), scale=(0.2, CORRIDOR_HEIGHT, 44), color=theme_wall)
     
-    make_room((-9, -40), (8, 8), 'west', decorator=add_photo_table_factory('west'))
+    make_room((-9, -40), (8, 8), 'west', decorator=combine_decorators(add_photo_table_factory('west'), add_bed_factory('west')))
 
     # Right Wall (X=5)
     # Room 2 (Big) at Z=-15
@@ -798,7 +842,7 @@ def start_game():
     Door(position=(5, DOOR_HEIGHT/2, -15 - DOOR_WIDTH/2), rotation=(0, 90, 0), width=DOOR_WIDTH, height=DOOR_HEIGHT, door_color=theme_door)
     create_wall(position=(5, CORRIDOR_HEIGHT/2, -9.5), scale=(0.2, CORRIDOR_HEIGHT, 9), color=theme_wall)
     
-    make_room((12, -15), (14, 14), 'east', decorator=add_photo_table_factory('east'))
+    make_room((12, -15), (14, 14), 'east', decorator=combine_decorators(add_photo_table_factory('east'), add_bed_factory('east')))
 
     # Lights Segment A
     for z in range(-40, -5, 15):
@@ -828,7 +872,7 @@ def start_game():
     Door(position=(15 - DOOR_WIDTH/2, DOOR_HEIGHT/2, 5), rotation=(0, 0, 0), width=DOOR_WIDTH, height=DOOR_HEIGHT, door_color=theme_door)
     create_wall(position=(20.5, CORRIDOR_HEIGHT/2, 5), scale=(9, CORRIDOR_HEIGHT, 0.2), color=theme_wall)
     
-    make_room((15, 10), (10, 10), 'north')
+    make_room((15, 10), (10, 10), 'north', decorator=add_bed_factory('north'))
     
     # Bottom Wall (Z=-5)
     create_wall(position=(20, CORRIDOR_HEIGHT/2, -5), scale=(30, CORRIDOR_HEIGHT, 0.2), color=theme_wall)
@@ -861,7 +905,7 @@ def start_game():
     Door(position=(35, DOOR_HEIGHT/2, 25 - DOOR_WIDTH/2), rotation=(0, 90, 0), width=DOOR_WIDTH, height=DOOR_HEIGHT, door_color=theme_door)
     create_wall(position=(35, CORRIDOR_HEIGHT/2, 33), scale=(0.2, CORRIDOR_HEIGHT, 14), color=theme_wall)
     
-    make_room((42, 25), (12, 12), 'east', decorator=add_photo_table_factory('east'))
+    make_room((42, 25), (12, 12), 'east', decorator=combine_decorators(add_photo_table_factory('east'), add_bed_factory('east')))
 
     # Lights Segment C
     for z in range(10, 35, 15):
@@ -1040,7 +1084,7 @@ def input(key):
             application.quit()
 
     elif game_state == 'game':
-        if viewing_photo:
+        if viewing_photo:   
             if key in ('e', 'escape', 'left mouse down', 'right mouse down'):
                 hide_photo()
             return

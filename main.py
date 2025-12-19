@@ -293,6 +293,126 @@ def start_game():
         else:
             raise ValueError(f'Unsupported door_dir {door_dir}')
 
+        def add_bathroom():
+            bath_w = min(max(2.4, w * 0.45), max(2.4, w - 1.2))
+            bath_d = min(max(2.4, d * 0.45), max(2.4, d - 1.2))
+            if bath_w <= 1.5 or bath_d <= 1.5:
+                return
+
+            wall_thickness = 0.18
+            inset = 0.4
+            bath_height = ROOM_HEIGHT - 0.4
+            wall_center_y = bath_height / 2
+            bath_wall_color = color.rgb(228, 230, 236)
+
+            if door_dir == 'west':
+                bath_cx = x - half_w + bath_w / 2 + inset
+                bath_cz = z + half_d - bath_d / 2 - inset
+                door_axis = 'south'
+            elif door_dir == 'east':
+                bath_cx = x + half_w - bath_w / 2 - inset
+                bath_cz = z + half_d - bath_d / 2 - inset
+                door_axis = 'south'
+            elif door_dir == 'north':
+                bath_cx = x + half_w - bath_w / 2 - inset
+                bath_cz = z + half_d - bath_d / 2 - inset
+                door_axis = 'west'
+            elif door_dir == 'south':
+                bath_cx = x + half_w - bath_w / 2 - inset
+                bath_cz = z - half_d + bath_d / 2 + inset
+                door_axis = 'north'
+            else:
+                return
+
+            door_span = bath_w if door_axis in ('north', 'south') else bath_d
+            door_width = max(0.8, min(1.2, door_span - 0.6))
+            if door_width >= door_span:
+                door_width = max(0.6, door_span - 0.4)
+
+            create_floor(position=(bath_cx, 0.02, bath_cz), scale=(bath_w, 1, bath_d))
+            create_wall(position=(bath_cx, ROOM_HEIGHT - 0.1, bath_cz), scale=(bath_w, 0.12, bath_d), color=theme_ceiling, texture='assets/wood.jpg', texture_scale=(max(1, bath_w / 2), max(1, bath_d / 2)))
+
+            def wall(position, scale):
+                create_wall(position=position, scale=scale, color=bath_wall_color, texture='assets/wall.png')
+
+            def full_wall(axis):
+                if axis == 'north':
+                    wall(position=(bath_cx, wall_center_y, bath_cz + bath_d / 2), scale=(bath_w, bath_height, wall_thickness))
+                elif axis == 'south':
+                    wall(position=(bath_cx, wall_center_y, bath_cz - bath_d / 2), scale=(bath_w, bath_height, wall_thickness))
+                elif axis == 'east':
+                    wall(position=(bath_cx + bath_w / 2, wall_center_y, bath_cz), scale=(wall_thickness, bath_height, bath_d))
+                else:
+                    wall(position=(bath_cx - bath_w / 2, wall_center_y, bath_cz), scale=(wall_thickness, bath_height, bath_d))
+
+            for axis in ('north', 'south', 'east', 'west'):
+                if axis != door_axis:
+                    full_wall(axis)
+
+            side_total = bath_w - door_width if door_axis in ('north', 'south') else bath_d - door_width
+            if door_axis in ('south', 'north') and side_total > 0.2:
+                left = max(0.2, side_total / 2)
+                right = max(0.2, side_total - left)
+                if door_axis == 'south':
+                    wall(position=(bath_cx - (door_width / 2 + left / 2), wall_center_y, bath_cz - bath_d / 2), scale=(left, bath_height, wall_thickness))
+                    wall(position=(bath_cx + (door_width / 2 + right / 2), wall_center_y, bath_cz - bath_d / 2), scale=(right, bath_height, wall_thickness))
+                else:
+                    wall(position=(bath_cx - (door_width / 2 + left / 2), wall_center_y, bath_cz + bath_d / 2), scale=(left, bath_height, wall_thickness))
+                    wall(position=(bath_cx + (door_width / 2 + right / 2), wall_center_y, bath_cz + bath_d / 2), scale=(right, bath_height, wall_thickness))
+            elif door_axis in ('east', 'west') and side_total > 0.2:
+                near = max(0.2, side_total / 2)
+                far_segment = max(0.2, side_total - near)
+                if door_axis == 'east':
+                    wall(position=(bath_cx + bath_w / 2, wall_center_y, bath_cz - (door_width / 2 + near / 2)), scale=(wall_thickness, bath_height, near))
+                    wall(position=(bath_cx + bath_w / 2, wall_center_y, bath_cz + (door_width / 2 + far_segment / 2)), scale=(wall_thickness, bath_height, far_segment))
+                else:
+                    wall(position=(bath_cx - bath_w / 2, wall_center_y, bath_cz - (door_width / 2 + near / 2)), scale=(wall_thickness, bath_height, near))
+                    wall(position=(bath_cx - bath_w / 2, wall_center_y, bath_cz + (door_width / 2 + far_segment / 2)), scale=(wall_thickness, bath_height, far_segment))
+
+            # Door frame visuals
+            frame_color = color.rgb(120, 100, 80)
+            frame_height = 3.0
+            frame_thickness = 0.12
+            frame_depth = 0.18
+            if door_axis == 'south':
+                door_z = bath_cz - bath_d / 2
+                Entity(model='cube', color=frame_color, position=(bath_cx - door_width / 2 + frame_thickness / 2, frame_height / 2, door_z - frame_depth / 2), scale=(frame_thickness, frame_height, frame_depth))
+                Entity(model='cube', color=frame_color, position=(bath_cx + door_width / 2 - frame_thickness / 2, frame_height / 2, door_z - frame_depth / 2), scale=(frame_thickness, frame_height, frame_depth))
+                Entity(model='cube', color=frame_color, position=(bath_cx, frame_height - 1.2, door_z - frame_depth / 2), scale=(door_width, frame_thickness, frame_depth))
+                switch_pos = (bath_cx + door_width / 2 + 0.25, 1.3, door_z + 0.3)
+                switch_rot = (0, -90, 0)
+            elif door_axis == 'north':
+                door_z = bath_cz + bath_d / 2
+                Entity(model='cube', color=frame_color, position=(bath_cx - door_width / 2 + frame_thickness / 2, frame_height / 2, door_z + frame_depth / 2), scale=(frame_thickness, frame_height, frame_depth))
+                Entity(model='cube', color=frame_color, position=(bath_cx + door_width / 2 - frame_thickness / 2, frame_height / 2, door_z + frame_depth / 2), scale=(frame_thickness, frame_height, frame_depth))
+                Entity(model='cube', color=frame_color, position=(bath_cx, frame_height - 1.2, door_z + frame_depth / 2), scale=(door_width, frame_thickness, frame_depth))
+                switch_pos = (bath_cx + door_width / 2 + 0.25, 1.3, door_z - 0.3)
+                switch_rot = (0, -90, 0)
+            elif door_axis == 'east':
+                door_x = bath_cx + bath_w / 2
+                Entity(model='cube', color=frame_color, position=(door_x + frame_depth / 2, frame_height / 2, bath_cz - door_width / 2 + frame_thickness / 2), scale=(frame_depth, frame_height, frame_thickness))
+                Entity(model='cube', color=frame_color, position=(door_x + frame_depth / 2, frame_height / 2, bath_cz + door_width / 2 - frame_thickness / 2), scale=(frame_depth, frame_height, frame_thickness))
+                Entity(model='cube', color=frame_color, position=(door_x + frame_depth / 2, frame_height - 1.2, bath_cz, ), scale=(frame_depth, frame_thickness, door_width))
+                switch_pos = (door_x - 0.3, 1.3, bath_cz + door_width / 2 + 0.25)
+                switch_rot = (0, 0, 0)
+            else:
+                door_x = bath_cx - bath_w / 2
+                Entity(model='cube', color=frame_color, position=(door_x - frame_depth / 2, frame_height / 2, bath_cz - door_width / 2 + frame_thickness / 2), scale=(frame_depth, frame_height, frame_thickness))
+                Entity(model='cube', color=frame_color, position=(door_x - frame_depth / 2, frame_height / 2, bath_cz + door_width / 2 - frame_thickness / 2), scale=(frame_depth, frame_height, frame_thickness))
+                Entity(model='cube', color=frame_color, position=(door_x - frame_depth / 2, frame_height - 1.2, bath_cz), scale=(frame_depth, frame_thickness, door_width))
+                switch_pos = (door_x + 0.3, 1.3, bath_cz + door_width / 2 + 0.25)
+                switch_rot = (0, 180, 0)
+
+            bath_light = PointLight(parent=scene, position=(bath_cx, ROOM_HEIGHT - 1.2, bath_cz), color=color.rgb(190, 205, 220))
+            LightSwitch(position=switch_pos, rotation=switch_rot, light_source=bath_light)
+
+            # Simple fixtures for mood
+            Entity(model='cube', color=color.rgb(235, 235, 240), position=(bath_cx - bath_w / 2 + 0.6, 0.45, bath_cz + bath_d / 2 - 0.5), scale=(0.9, 0.9, 0.5))
+            Entity(model='sphere', color=color.rgb(255, 255, 255), position=(bath_cx - bath_w / 2 + 0.6, 1.0, bath_cz + bath_d / 2 - 0.4), scale=0.35, unlit=True)
+            Entity(model='cube', color=color.rgb(200, 200, 205), position=(bath_cx + bath_w / 2 - 0.6, 0.35, bath_cz + bath_d / 2 - 0.6), scale=(0.7, 0.6, 0.7))
+
+        add_bathroom()
+
         room_light = PointLight(parent=scene, position=(x, ROOM_HEIGHT - 1, z), color=light_color)
 
         if flicker:
@@ -303,6 +423,29 @@ def start_game():
 
         if decorator:
             decorator(center=(x, z), size=(w, d))
+
+    painting_textures = [
+        'assets/wood.jpg',
+    ]
+    painting_index = 0
+
+    def place_painting(position, rotation=(0, 0, 0), scale=(3, 2.4)):
+        nonlocal painting_index
+        if not painting_textures:
+            return
+        texture_path = painting_textures[painting_index % len(painting_textures)]
+        painting_index += 1
+        painting = Entity(
+            model='quad',
+            texture=texture_path,
+            position=position,
+            rotation=rotation,
+            scale=scale,
+            unlit=True,
+            double_sided=False
+        )
+        # Pull the painting slightly off the wall so the texture is visible head-on.
+        painting.position += painting.forward * 0.03
 
     def add_occult_circle(center, size):
         cx, cz = center
@@ -329,10 +472,10 @@ def start_game():
         )
         for offset in (-1.2, 0, 1.2):
             Entity(
-                model='cylinder',
+                model='cube',
                 color=color.rgb(200, 160, 90),
                 position=(cx + offset, 0.6, cz + size[1] * 0.18),
-                scale=(0.12, 0.6, 0.12)
+                scale=(0.14, 0.6, 0.14)
             )
             Entity(
                 model='sphere',
@@ -410,6 +553,9 @@ def start_game():
         WallLight(position=(-4.8, 4, z), rotation=(0, 90, 0), flicker=(z % 30 == 0))
         WallLight(position=(4.8, 4, z), rotation=(0, -90, 0), flicker=(z % 20 == 0), intensity_range=(0.1, 0.85))
 
+    place_painting(position=(-4.6, 3.2, -32), rotation=(0, 90, 0))
+    place_painting(position=(4.6, 3.2, -18), rotation=(0, -90, 0))
+
     # --- INTERSECTION 1 (A -> B) ---
     # Fill missing corner (-5 to 0, 0 to 5)
     create_floor(position=(-2.5, 0, 2.5), scale=(5, 1, 5))
@@ -437,7 +583,7 @@ def start_game():
 
     # Lights Segment B
     for x in range(5, 30, 15):
-        WallLight(position=(x, 4, 4.8), rotation=(0, 180, 0), flicker=(x == 20), intensity_range=(0.05, 0.8))
+        WallLight(position=(x, 4, 4.8), rotation=(0, 180, 0), flicker=(x == 20), intensity_range=(1.8, 5))
         WallLight(position=(x, 4, -4.8), rotation=(0, 0, 0), flicker=(x == 5))
 
     # --- INTERSECTION 2 (B -> C) ---
@@ -469,6 +615,12 @@ def start_game():
     for z in range(10, 35, 15):
         WallLight(position=(25.2, 4, z), rotation=(0, 90, 0), flicker=(z == 25), intensity_range=(0.08, 0.9))
         WallLight(position=(34.8, 4, z), rotation=(0, -90, 0), flicker=(z != 10))
+
+    place_painting(position=(12, 3, 4.6), rotation=(0, 180, 0))
+    place_painting(position=(24, 3, -4.6), rotation=(0, 0, 0))
+
+    place_painting(position=(25.4, 3.1, 18), rotation=(0, 90, 0))
+    place_painting(position=(34.6, 3.1, 30), rotation=(0, -90, 0))
 
     # -------------------
     # STAIRCASE
@@ -567,6 +719,9 @@ def start_game():
     for z in range(int(upper_start + 8), int(upper_end), 12):
         WallLight(position=(stair_x - CORRIDOR_WIDTH / 2 + 0.2, landing_height + 4, z), rotation=(0, 90, 0), flicker=True, intensity_range=(0.1, 0.9))
         WallLight(position=(stair_x + CORRIDOR_WIDTH / 2 - 0.2, landing_height + 4, z), rotation=(0, -90, 0), flicker=(z % 24 == 0), intensity_range=(0.05, 0.8))
+
+    place_painting(position=(stair_x - CORRIDOR_WIDTH / 2 + 0.3, landing_height + 2.8, upper_start + 14), rotation=(0, 90, 0), scale=(2.6, 2.2))
+    place_painting(position=(stair_x + CORRIDOR_WIDTH / 2 - 0.3, landing_height + 2.8, upper_start + 26), rotation=(0, -90, 0), scale=(2.6, 2.2))
 
     dread_light = PointLight(parent=scene, position=(stair_x, landing_height + 3.5, upper_end - 3), color=color.rgb(180, 20, 20), shadows=True)
     flickering_lights.append(FlickeringLight(dread_light, interval_range=(0.02, 0.15), intensity_range=(0.03, 0.7)))
